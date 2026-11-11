@@ -11,6 +11,7 @@ from evalve.aws import PUBLIC_ACCESS_BLOCK, Aws, AwsError
 
 ACCOUNT = "123456789012"
 SECRET = f"arn:aws:secretsmanager:us-east-1:{ACCOUNT}:secret:evalve/application-test"
+UI_IMAGE = "ghcr.io/evalve-app/evalve-ui@sha256:" + "0123456789abcdef" * 4
 
 
 class CredentialsTest(unittest.TestCase):
@@ -146,7 +147,105 @@ class UpTest(unittest.TestCase):
         self.assertEqual(apply.call_args.args[2]["backup_retention_days"], 7)
         self.assertIsNone(apply.call_args.args[2]["domain"])
         ready.assert_called_once_with("https://evalve.example.com")
-        self.assertIn("Kitaru dashboard:", output)
+        self.assertIn("Bundled dashboard: https://evalve.example.com/\n", output)
+        self.assertNotIn("Evalve dashboard:", output)
+
+    def test_new_deployment_without_ui_image_uses_bundled_step_and_no_image(self):
+        code, _, apply, _, _, output, _ = self.invoke(
+            [
+                "--server-type",
+                "t3.small",
+                "--database-class",
+                "db.t4g.micro",
+                "--monthly-estimate",
+                "36",
+            ],
+            ["yes"],
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(apply.call_args.args[2]["ui_image"], "")
+        self.assertEqual(apply.call_args.args[2]["dashboard"], "bundled")
+        self.assertIn("Dashboard step: bundled | Evalve dashboard image: none", output)
+        self.assertIn("A change of the dashboard step or image replaces EC2", output)
+
+    def test_ui_image_runs_the_evalve_dashboard_at_app_beside_the_bundled_one(self):
+        code, _, apply, _, _, output, _ = self.invoke(
+            [
+                "--server-type",
+                "t3.small",
+                "--database-class",
+                "db.t4g.micro",
+                "--ui-image",
+                UI_IMAGE,
+                "--monthly-estimate",
+                "36",
+            ],
+            ["yes"],
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(apply.call_args.args[2]["ui_image"], UI_IMAGE)
+        self.assertEqual(apply.call_args.args[2]["dashboard"], "bundled")
+        self.assertIn(
+            f"Dashboard step: bundled | Evalve dashboard image: {UI_IMAGE}", output
+        )
+        self.assertIn("Bundled dashboard: https://evalve.example.com/\n", output)
+        self.assertIn("Evalve dashboard: https://evalve.example.com/app/\n", output)
+
+    def test_later_up_reuses_saved_ui_image_and_step(self):
+        existing = {
+            "public_ip": "203.0.113.10",
+            "deployment": {
+                "server_instance_type": "t3.small",
+                "database_instance_class": "db.t4g.micro",
+                "application_secret_arn": SECRET,
+                "ui_image": UI_IMAGE,
+                "dashboard": "bundled",
+            },
+        }
+        code, _, apply, _, _, output, _ = self.invoke(
+            ["--monthly-estimate", "36"], ["yes"], existing=existing
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(apply.call_args.args[2]["ui_image"], UI_IMAGE)
+        self.assertEqual(apply.call_args.args[2]["dashboard"], "bundled")
+        self.assertIn(
+            f"Dashboard step: bundled | Evalve dashboard image: {UI_IMAGE}", output
+        )
+        self.assertIn("Evalve dashboard: https://evalve.example.com/app/\n", output)
+
+    def test_new_ui_image_replaces_the_saved_one(self):
+        newer = UI_IMAGE[:-1] + "f"
+        existing = {
+            "deployment": {
+                "server_instance_type": "t3.small",
+                "database_instance_class": "db.t4g.micro",
+                "application_secret_arn": SECRET,
+                "ui_image": UI_IMAGE,
+                "dashboard": "bundled",
+            },
+        }
+        code, _, apply, _, _, _, _ = self.invoke(
+            ["--ui-image", newer, "--monthly-estimate", "36"],
+            ["yes"],
+            existing=existing,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(apply.call_args.args[2]["ui_image"], newer)
+
+    def test_mutable_ui_image_reference_is_rejected_before_aws(self):
+        for reference in (
+            "ghcr.io/evalve-app/evalve-ui:latest",
+            "ghcr.io/other/evalve-ui@sha256:" + "0" * 64,
+        ):
+            with self.subTest(reference=reference):
+                with (
+                    patch.object(cli, "Aws") as factory,
+                    redirect_stderr(io.StringIO()) as errors,
+                ):
+                    with self.assertRaises(SystemExit):
+                        cli.main(["up", "--ui-image", reference])
+                factory.assert_not_called()
+                self.assertIn("immutable Evalve dashboard image digest", errors.getvalue())
 
     def test_first_up_can_use_one_day_of_automated_backups(self):
         code, _, apply, _, _, output, _ = self.invoke(

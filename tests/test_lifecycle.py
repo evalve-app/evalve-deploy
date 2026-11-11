@@ -15,6 +15,7 @@ DB = "db-0123456789ABCDEFG"
 SECRET = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT}:secret:evalve/application-test"
 VERSION = "12345678-1234-1234-1234-123456789abc"
 SNAPSHOT = "evalve-20261110170000-123456789abc"
+UI_IMAGE = "ghcr.io/evalve-app/evalve-ui@sha256:" + "0123456789abcdef" * 4
 CONFIG = {
     "server_instance_type": "t3.small",
     "database_instance_class": "db.t4g.micro",
@@ -22,6 +23,8 @@ CONFIG = {
     "application_secret_arn": SECRET,
     "application_secret_version": VERSION,
     "domain": "example.com",
+    "ui_image": UI_IMAGE,
+    "dashboard": "bundled",
 }
 
 
@@ -70,6 +73,40 @@ class PowerTest(unittest.TestCase):
         aws.call.assert_called_once_with(
             "ec2", "wait", "instance-stopped", "--instance-ids", INSTANCE
         )
+
+
+class PowerChangeTest(unittest.TestCase):
+    def invoke(self, action):
+        aws = Mock(account=ACCOUNT, region=REGION, profile="evalve")
+        aws.read_document.return_value = (None, None)
+        aws.caller_account.return_value = ACCOUNT
+        aws.state_outputs.return_value = {
+            "instance_id": INSTANCE,
+            "url": "https://example.com",
+            "deployment": CONFIG,
+        }
+        with (
+            patch("builtins.input", return_value="yes"),
+            patch.object(power, "start") as start,
+            patch.object(power, "stop") as stop,
+            patch.object(lifecycle, "wait_for_kitaru"),
+            patch.object(terraform, "apply") as apply,
+            redirect_stdout(io.StringIO()) as output,
+        ):
+            lifecycle.power_change(aws, action)
+        apply.assert_not_called()
+        aws.create_document.assert_not_called()
+        return output.getvalue(), start, stop
+
+    def test_start_prints_both_dashboards_from_the_saved_settings(self):
+        output, start, _ = self.invoke("start")
+        start.assert_called_once()
+        self.assertIn("Bundled dashboard: https://example.com/\n", output)
+        self.assertIn("Evalve dashboard: https://example.com/app/\n", output)
+
+    def test_stop_leaves_the_saved_dashboard_settings_unchanged(self):
+        _, _, stop = self.invoke("stop")
+        stop.assert_called_once()
 
 
 class BackupTest(unittest.TestCase):
@@ -193,6 +230,7 @@ class ShutdownTest(unittest.TestCase):
 
         def destroy(*args):
             self.events.append("destroy")
+            self.destroyed_with = args[2]
             self.assertEqual(args[-1], DB)
             if destroy_fails:
                 raise EvalveError("Terraform interrupted")
@@ -248,6 +286,21 @@ class ShutdownTest(unittest.TestCase):
         )
         self.assertIn("evalve up --restore", output)
         self.assertNotIn(lifecycle.OPERATION_KEY, self.documents)
+
+    def test_down_carries_the_dashboard_settings_into_the_snapshot_and_destroy(self):
+        self.invoke()
+        manifest = self.documents[backup.snapshot_key(self.saved_snapshot())]
+        self.assertEqual(manifest["configuration"]["ui_image"], UI_IMAGE)
+        self.assertEqual(manifest["configuration"]["dashboard"], "bundled")
+        self.assertEqual(self.destroyed_with["ui_image"], UI_IMAGE)
+        self.assertEqual(self.destroyed_with["dashboard"], "bundled")
+
+    def saved_snapshot(self):
+        return next(
+            key.removeprefix("evalve/snapshots/").removesuffix(".json")
+            for key in self.documents
+            if key.startswith("evalve/snapshots/")
+        )
 
     def test_verification_failure_cannot_destroy_database(self):
         with self.assertRaisesRegex(EvalveError, "verification failed"):
@@ -319,6 +372,8 @@ class RestoreTest(unittest.TestCase):
                 self.assertEqual(variables["application_secret_version"], VERSION)
                 self.assertEqual(variables["backup_retention_days"], 1)
                 self.assertIsNone(variables["domain"])
+                self.assertEqual(variables["ui_image"], UI_IMAGE)
+                self.assertEqual(variables["dashboard"], "bundled")
                 self.assertEqual(code, 0 if healthy else 1)
                 if healthy:
                     aws.delete_document.assert_called_once_with(

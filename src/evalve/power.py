@@ -15,6 +15,8 @@ DRAIN = [
 START = [
     "cloud-init status --wait",
     "systemctl start evalve-kitaru.service evalve-refresh.timer evalve-caddy.service",
+    # The Evalve dashboard unit exists only when the deployment has a ui_image.
+    "if systemctl cat evalve-ui.service >/dev/null 2>&1; then systemctl start evalve-ui.service; fi",
 ]
 
 

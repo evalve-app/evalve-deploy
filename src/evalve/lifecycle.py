@@ -14,8 +14,17 @@ TF_SETTINGS = (
     "database_engine_version",
     "application_secret_version",
     "snapshot_id",
+    "ui_image",
+    "dashboard",
 )
 PHASE_TWO_IMAGE = "zenmldocker/kitaru-server@sha256:05ea00482c0adf4609a34d2c95575a6530ce5d60f6cea0e79716336d9e251d47"
+
+
+def dashboard_lines(url: str, deployment: dict) -> list[str]:
+    lines = [f"Bundled dashboard: {url}/"]
+    if deployment.get("ui_image"):
+        lines.append(f"Evalve dashboard: {url}/app/")
+    return lines
 
 
 def managed_resources(state: dict | None) -> list[dict]:
@@ -138,7 +147,8 @@ def power_change(aws: Aws, action: str) -> None:
         print("Starting EC2 and checking the existing HTTPS endpoint…", flush=True)
         power.start(aws, outputs["instance_id"])
         wait_for_kitaru(outputs["url"])
-        print(f"Kitaru dashboard: {outputs['url']}")
+        for line in dashboard_lines(outputs["url"], outputs.get("deployment", {})):
+            print(line)
     else:
         print("Draining Kitaru before stopping EC2…", flush=True)
         power.stop(aws, outputs["instance_id"])

@@ -85,3 +85,32 @@ variable "verified_shutdown" {
   type    = bool
   default = false
 }
+
+variable "ui_image" {
+  type        = string
+  default     = ""
+  nullable    = false
+  description = "Evalve dashboard image pinned by digest. Empty means no Evalve dashboard."
+
+  validation {
+    condition     = var.ui_image == "" || can(regex("^ghcr\\.io/evalve-app/evalve-ui@sha256:[a-f0-9]{64}$", var.ui_image))
+    error_message = "Use an immutable Evalve dashboard image digest such as ghcr.io/evalve-app/evalve-ui@sha256:<64 hex characters>, or leave ui_image empty."
+  }
+}
+
+variable "dashboard" {
+  type        = string
+  default     = "bundled"
+  nullable    = false
+  description = "Dashboard rollout step: bundled (Evalve dashboard at /app/) or evalve (Evalve dashboard at /)."
+
+  validation {
+    condition     = contains(["bundled", "evalve"], var.dashboard)
+    error_message = "Use bundled or evalve for the dashboard step."
+  }
+
+  validation {
+    condition     = var.dashboard == "bundled"
+    error_message = "This Evalve version supports only the bundled dashboard step."
+  }
+}

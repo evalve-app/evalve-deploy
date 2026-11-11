@@ -74,6 +74,7 @@ resource "aws_instance" "server" {
     public_ip      = aws_eip.server.public_ip
     kitaru_image   = var.server_image
     caddy_image    = local.caddy_image
+    ui_image       = var.ui_image
   })
 
   metadata_options {

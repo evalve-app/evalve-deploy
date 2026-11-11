@@ -1,6 +1,6 @@
 # Evalve
 
-Evalve deploys one shared Kitaru server to AWS. The operator uses the Evalve CLI. Teammates sign in through a browser invitation and connect their agents with an API key from the Kitaru dashboard.
+Evalve deploys one shared Kitaru server to AWS. The operator uses the Evalve CLI. Teammates sign in through a browser invitation and connect their agents with an API key from the Bundled dashboard.
 
 - [Teammate quickstart](docs/team-quickstart.md)
 - [AWS pilot runbook and cost estimate](docs/aws-pilot.md)
@@ -25,7 +25,7 @@ Review the monthly cost for the selected region and instance sizes before the pi
 evalve up --server-type t3.small --database-class db.t4g.micro --backup-retention-days 1
 ```
 
-The sizes above are examples. Use one day of automated RDS backup retention for the Free plan pilot. A new team deployment defaults to seven days. `up` prompts for your estimate in USD before credits and shows the account, region, resources, and estimate for confirmation. It sets up the private, versioned S3 state bucket on the first run. When HTTPS is ready, `up` prints the dashboard URL.
+The sizes above are examples. Use one day of automated RDS backup retention for the Free plan pilot. A new team deployment defaults to seven days. `up` prompts for your estimate in USD before credits and shows the account, region, resources, and estimate for confirmation. It sets up the private, versioned S3 state bucket on the first run. When HTTPS is ready, `up` prints the Bundled dashboard URL.
 
 Run `evalve credentials` with the same AWS profile and region to print the `default` username and bootstrap password in your terminal. If you changed the password in Kitaru, use your current password.
 
@@ -34,6 +34,26 @@ Use the same command and options to retry an interrupted provisioning attempt, a
 If Terraform fails to save state to S3, Evalve prints the path of its local recovery file and blocks the next operation on that machine. Reconcile the recovery file with the S3 backend before retrying.
 
 To switch to a custom domain, point its A record at the deployment's Elastic IP, wait for DNS to resolve, then run `evalve up --domain <hostname>`. Changing the hostname replaces EC2, so expect a short outage. The Elastic IP and RDS database are retained.
+
+## Evalve dashboard (step 1)
+
+The Evalve dashboard is the web UI from the `evalve-ui` repo. The Bundled dashboard is the web UI inside the Kitaru server image. To test the Evalve dashboard on the shared server while Teammates keep the Bundled dashboard, pass its image by digest:
+
+```sh
+evalve up --ui-image ghcr.io/evalve-app/evalve-ui@sha256:<digest>
+```
+
+`up` accepts only an immutable digest of the `evalve-ui` image in GitHub Container Registry under `evalve-app`. A tag such as `:latest` is rejected. Use an image that serves a build for the `/app/` base path on container port 3000.
+
+In step 1 (dashboard step `bundled`, the default), Caddy routes the paths on the deployment's hostname as follows:
+
+- `/api/*`, `/health*`, `/docs*`, `/redoc*` and `/openapi.json` go to Kitaru.
+- `/app` and `/app/*` go to the Evalve dashboard container.
+- All other paths go to Kitaru, so the Bundled dashboard stays at `/`.
+
+The Evalve dashboard container listens only on `127.0.0.1:3000`. It restarts on failure, starts on boot, and rotates its logs like the Kitaru container. After `up`, Evalve prints the Bundled dashboard URL and the Evalve dashboard URL.
+
+Evalve saves the image and the dashboard step in S3 state. A later `up` without `--ui-image` reuses the saved image, and `stop`, `start`, `down` and `up --restore` keep both values. The `up` summary shows the step and the image before you confirm. A change of the step or the image replaces EC2, so expect a short outage. The Elastic IP and RDS database are retained. Without `--ui-image`, the deployment works as before and serves only the Bundled dashboard.
 
 ## Stop, start, and recover
 

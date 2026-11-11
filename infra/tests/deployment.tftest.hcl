@@ -164,3 +164,114 @@ run "restore_keeps_database_private_and_pins_application_secret" {
     error_message = "Restoration must use the saved snapshot and credential version, with a private, protected RDS instance."
   }
 }
+
+run "no_ui_image_keeps_todays_caddy_and_units" {
+  command = apply
+
+  assert {
+    condition = (
+      strcontains(aws_instance.server.user_data, "203-0-113-10.sslip.io {\n  reverse_proxy 127.0.0.1:8000\n}\nCADDY") &&
+      strcontains(aws_instance.server.user_data, "systemctl enable --now --no-block evalve-kitaru.service evalve-refresh.timer evalve-caddy.service\n") &&
+      !strcontains(aws_instance.server.user_data, "evalve-ui") &&
+      !strcontains(aws_instance.server.user_data, "3000")
+    )
+    error_message = "Without ui_image, Caddy must send every path to Kitaru and no dashboard unit may exist."
+  }
+
+  assert {
+    condition     = output.deployment.ui_image == "" && output.deployment.dashboard == "bundled"
+    error_message = "A deployment without ui_image must record an empty image and the bundled step."
+  }
+}
+
+run "bundled_step_serves_evalve_dashboard_at_app" {
+  command = apply
+
+  variables {
+    ui_image = "ghcr.io/evalve-app/evalve-ui@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+
+  assert {
+    condition = strcontains(aws_instance.server.user_data, <<-CADDY
+      203-0-113-10.sslip.io {
+        @kitaru_api path /api/* /health* /docs* /redoc* /openapi.json
+        handle @kitaru_api {
+          reverse_proxy 127.0.0.1:8000
+        }
+        @evalve_dashboard path /app /app/*
+        handle @evalve_dashboard {
+          reverse_proxy 127.0.0.1:3000
+        }
+        handle {
+          reverse_proxy 127.0.0.1:8000
+        }
+      }
+      CADDY
+    )
+    error_message = "Caddy must send the API paths to Kitaru, /app and /app/* to the dashboard container, and all other paths to Kitaru."
+  }
+
+  assert {
+    condition = (
+      strcontains(aws_instance.server.user_data, "--publish 127.0.0.1:3000:3000 \\\n") &&
+      strcontains(aws_instance.server.user_data, "  ${var.ui_image}\nExecStop=/usr/bin/docker stop --time 30 evalve-ui\nRestart=always") &&
+      length(regexall("--log-driver local --log-opt max-size=10m --log-opt max-file=3", aws_instance.server.user_data)) == 3 &&
+      strcontains(aws_instance.server.user_data, "systemctl enable --now --no-block evalve-kitaru.service evalve-refresh.timer evalve-caddy.service evalve-ui.service\n")
+    )
+    error_message = "The dashboard unit must run the pinned image on loopback only, with log rotation, restart, and start on boot."
+  }
+
+  assert {
+    condition = toset(jsondecode(aws_iam_role_policy.secrets.policy).Statement[0].Resource) == toset([
+      var.application_secret_arn,
+      aws_db_instance.main.master_user_secret[0].secret_arn,
+    ])
+    error_message = "The server role must only read the two Evalve secrets."
+  }
+
+  assert {
+    condition     = output.deployment.ui_image == var.ui_image && output.deployment.dashboard == "bundled"
+    error_message = "The deployment output must record ui_image and the dashboard step."
+  }
+}
+
+run "reject_ui_image_tag" {
+  command = plan
+
+  variables {
+    ui_image = "ghcr.io/evalve-app/evalve-ui:latest"
+  }
+
+  expect_failures = [var.ui_image]
+}
+
+run "reject_ui_image_from_another_owner" {
+  command = plan
+
+  variables {
+    ui_image = "ghcr.io/someone-else/evalve-ui@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+
+  expect_failures = [var.ui_image]
+}
+
+run "reject_unknown_dashboard_step" {
+  command = plan
+
+  variables {
+    dashboard = "kitaru"
+  }
+
+  expect_failures = [var.dashboard]
+}
+
+run "reject_evalve_step_until_supported" {
+  command = plan
+
+  variables {
+    ui_image  = "ghcr.io/evalve-app/evalve-ui@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    dashboard = "evalve"
+  }
+
+  expect_failures = [var.dashboard]
+}

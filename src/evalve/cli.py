@@ -49,6 +49,15 @@ def backup_retention_days(value: str) -> int:
     return days
 
 
+def ui_image(value: str) -> str:
+    if not re.fullmatch(r"ghcr\.io/evalve-app/evalve-ui@sha256:[a-f0-9]{64}", value):
+        raise argparse.ArgumentTypeError(
+            "Use an immutable Evalve dashboard image digest such as "
+            "ghcr.io/evalve-app/evalve-ui@sha256:<64 hex characters>."
+        )
+    return value
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
         description="Deploy a shared Kitaru server on AWS."
@@ -96,6 +105,11 @@ def parser() -> argparse.ArgumentParser:
         "--restore",
         metavar="SNAPSHOT_ID",
         help="Restore the selected Evalve snapshot into an empty deployment.",
+    )
+    up.add_argument(
+        "--ui-image",
+        type=ui_image,
+        help="Evalve dashboard image pinned by digest. Step 1 serves it at /app/ beside the Bundled dashboard.",
     )
     up.add_argument(
         "--monthly-estimate",
@@ -186,6 +200,8 @@ def up(args: argparse.Namespace) -> None:
                     "Run up with the default sslip.io address before switching to a custom domain."
                 )
             verify_dns(domain, public_ip)
+        dashboard_image = args.ui_image or existing.get("ui_image") or ""
+        dashboard = existing.get("dashboard") or "bundled"
 
         print(
             f"AWS profile: {aws.profile} | Account: {aws.account} | Region: {aws.region}"
@@ -196,6 +212,12 @@ def up(args: argparse.Namespace) -> None:
         print(f"RDS automated backup retention: {retention_days} day(s)")
         print(
             f"Endpoint: {domain or 'sslip.io'} on one Elastic IP | State bucket: {aws.bucket}"
+        )
+        print(
+            f"Dashboard step: {dashboard} | Evalve dashboard image: {dashboard_image or 'none'}"
+        )
+        print(
+            "A change of the dashboard step or image replaces EC2. RDS and the Elastic IP stay."
         )
         estimate = args.monthly_estimate
         if estimate is None:
@@ -240,6 +262,8 @@ def up(args: argparse.Namespace) -> None:
                     for key in lifecycle.TF_SETTINGS
                     if key in existing
                 },
+                "ui_image": dashboard_image,
+                "dashboard": dashboard,
             },
         )
         url = outputs["url"]
@@ -247,7 +271,10 @@ def up(args: argparse.Namespace) -> None:
         wait_for_kitaru(url)
         if restore_etag:
             aws.delete_document(lifecycle.OPERATION_KEY, restore_etag)
-        print(f"Kitaru dashboard: {url}")
+        for line in lifecycle.dashboard_lines(
+            url, {"ui_image": dashboard_image, "dashboard": dashboard}
+        ):
+            print(line)
         print(
             "Run evalve credentials with the same AWS profile and region for the bootstrap dashboard login."
         )

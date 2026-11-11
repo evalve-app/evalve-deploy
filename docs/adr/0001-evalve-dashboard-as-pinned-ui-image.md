@@ -38,3 +38,11 @@ Added 2026-11-11 by ticket 01 of `.scratch/evalve-dashboard-rollout`.
 - The label must equal `kitaru_version` as an exact string. A missing label, an unreadable label, or a different value stops `up` before Terraform runs, and the message names both versions.
 - Both version checks run only when `ui_image` is set. With an empty `ui_image`, `up` calls no registry, as today.
 - `evalve-ui` ADR 0004 records the same contract for the image build.
+
+## Container contract
+
+Added 2026-11-11 by ticket 02 of `.scratch/evalve-dashboard-rollout`.
+
+- The `evalve-ui` image listens on container port 3000. Evalve publishes it as `127.0.0.1:3000:3000`.
+- Caddy keeps the `/app` prefix when it proxies `/app` and `/app/*` to the container. The step 1 image therefore serves its build under `/app/`.
+- The `evalve-ui` repo has not yet recorded either point. It must match them, or this section changes.
