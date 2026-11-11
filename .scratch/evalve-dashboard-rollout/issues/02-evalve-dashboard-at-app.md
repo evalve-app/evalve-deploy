@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** resolved
+Status: resolved
 
 - [x] `up` accepts `--ui-image`. Terraform rejects a reference that is not an immutable digest of the `evalve-ui` image in GHCR under `evalve-app`.
 - [x] A `dashboard` setting exists with the values `bundled` and `evalve` and the default `bundled`. This ticket supports only `bundled`.

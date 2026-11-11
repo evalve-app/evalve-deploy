@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** resolved
+Status: resolved
 
 - [x] The labels of the pinned server image are checked from the registry, and the result is written down with the exact label key and value, or with the fact that no version label exists.
 - [x] The source of the server's Kitaru version is chosen: a registry label, or a new setting next to `server_image`.

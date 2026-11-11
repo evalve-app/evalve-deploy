@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 (Switch to the Evalve dashboard at /).
 
-**Status:** resolved
+Status: resolved
 
 - [x] Readiness tests with a mocked opener: success for each step, and failure when the dashboard path returns Kitaru or the Bundled dashboard, an error, or no response.
 - [x] Readiness test: failure when `/api/v1/info` does not return Kitaru JSON.

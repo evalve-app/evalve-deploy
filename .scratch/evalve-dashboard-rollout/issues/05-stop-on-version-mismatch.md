@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (Choose the version label contract), 02 (Run the Evalve dashboard at /app/).
 
-**Status:** resolved
+Status: resolved
 
 - [x] A function reads the labels of a public image digest through the anonymous registry API.
 - [x] `up` test: matching versions continue to Terraform.

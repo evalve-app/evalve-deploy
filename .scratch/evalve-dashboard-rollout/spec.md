@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 
 # Spec: Deploy the Evalve dashboard beside, then in place of, the Bundled dashboard
 
@@ -121,3 +121,8 @@ The decisions are recorded in this repo's ADR 0001 and in `evalve-ui` ADRs 0001 
 - Step 2 happens only at full parity with the Bundled dashboard (`evalve-ui` ADR 0003). Until then, `bundled` stays the default.
 - Invitation links from step 1 use the Bundled format `/activate-user?user=<id>&token=<token>`. The Evalve dashboard keeps that format, so the links survive step 2.
 - References: `docs/research/kitaru-external-ui.md`, `docs/adr/0001-evalve-dashboard-as-pinned-ui-image.md`, `GLOSSARY.md`.
+
+## Comments
+
+- 2026-11-11: Tickets 01–05 are resolved, so the spec is resolved. No ticket covers this user story:
+  - Story 35 ("dashboard" wording correct in both steps): the `credentials` help text at `src/evalve/cli.py:89` says "bootstrap Kitaru dashboard login". `GLOSSARY.md` lists "Kitaru dashboard" under _Avoid_.

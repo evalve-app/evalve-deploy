@@ -7,7 +7,9 @@ Issues and specs for this repo live as markdown files in `.scratch/`.
 - One feature per directory: `.scratch/<feature-slug>/`
 - The spec is `.scratch/<feature-slug>/spec.md`
 - Implementation issues are one file per ticket at `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`, never a single combined tickets file
-- Triage state is recorded as a `Status:` line near the top of each issue file (see `triage-labels.md` for the role strings)
+- Status is one plain line near the top of each spec and issue file: `Status: <value>`, with no bold or other markdown. Values: the five role strings in `triage-labels.md`, plus `claimed` and `resolved`. `scripts/lint_tickets.py` enforces this
+- Set an issue to `Status: resolved` when its work is committed
+- When the last issue of a spec is resolved, set the spec to `Status: resolved`. Under `## Comments` in the spec, list each user story that no issue covered, with the file and line that still needs work
 - Comments and conversation history append to the bottom of the file under a `## Comments` heading
 
 ## When a skill says "publish to the issue tracker"

@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 (Run the Evalve dashboard at /app/).
 
-**Status:** resolved
+Status: resolved
 
 - [x] `up` accepts `--dashboard {bundled,evalve}`.
 - [x] `up` test: `--dashboard evalve` with no saved or given `ui_image` fails with a clear message and makes no AWS writes.
