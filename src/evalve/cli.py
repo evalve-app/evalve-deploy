@@ -198,7 +198,12 @@ def check_kitaru_versions(
             f"Evalve does not know the Kitaru version of {server_image}. "
             "Pass --kitaru-version and retry."
         )
-    tagged = tag_digest(repository, kitaru_version)
+    try:
+        tagged = tag_digest(repository, kitaru_version)
+    except EvalveError as exc:
+        raise EvalveError(
+            f"{exc} Evalve needs the tag to check the server image digest {digest}."
+        ) from None
     if tagged != digest:
         raise EvalveError(
             f"Docker Hub tag {repository}:{kitaru_version} resolves to {tagged}, "

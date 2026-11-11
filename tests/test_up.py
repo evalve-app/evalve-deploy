@@ -14,7 +14,8 @@ SECRET = f"arn:aws:secretsmanager:us-east-1:{ACCOUNT}:secret:evalve/application-
 UI_IMAGE = "ghcr.io/evalve-app/evalve-ui@sha256:" + "0123456789abcdef" * 4
 SERVER_DIGEST = "sha256:05ea00482c0adf4609a34d2c95575a6530ce5d60f6cea0e79716336d9e251d47"
 CUSTOM_DIGEST = "sha256:" + "a" * 64
-VERSION_LABEL = cli.KITARU_VERSION_LABEL
+# The label key is a contract with evalve-ui (ADR 0001), so the test spells it out.
+VERSION_LABEL = "io.github.evalve-app.kitaru.version"
 
 
 class CredentialsTest(unittest.TestCase):
@@ -300,6 +301,7 @@ class UpTest(unittest.TestCase):
         )
         self.assert_stopped_before_aws_writes(code, aws, apply)
         self.assertIn(message, errors)
+        self.assertIn(SERVER_DIGEST, errors)
 
     def custom_server_deployment(self, **extra):
         return {

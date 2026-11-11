@@ -24,3 +24,4 @@
 - Order: the tag check runs first, then the label check. A missing label and a different value both stop `up`.
 - Gap: when `ui_image` is empty and the version of a non-default `server_image` is unknown, Terraform records its default `0.27.6`. The tag check catches this pair on the next `up` with an image. ADR 0001 now records this rule.
 - `image_labels` also requires that the config of a single-manifest image is `linux/amd64`. A registry reply larger than 4 MiB stops `up` with that cause.
+- Gap: `--kitaru-version` with an empty `ui_image` is saved without a tag check, because `up` calls no registry then. The tag check runs on the next `up` that sets `ui_image`.
