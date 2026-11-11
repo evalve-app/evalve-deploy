@@ -59,6 +59,12 @@ class CredentialsTest(unittest.TestCase):
                     output.getvalue(), "Username: default\nPassword: test-password\n"
                 )
 
+    def test_help_names_the_admin_account_and_no_kitaru_dashboard(self):
+        with redirect_stdout(io.StringIO()) as output, self.assertRaises(SystemExit):
+            cli.main(["--help"])
+        self.assertIn("Print the bootstrap Admin account login", output.getvalue())
+        self.assertNotIn("Kitaru dashboard", output.getvalue())
+
     def test_missing_deployment_refuses_to_fetch_any_secret(self):
         aws = Mock()
         aws.state_outputs.return_value = {}
@@ -189,6 +195,10 @@ class UpTest(unittest.TestCase):
         ready.assert_called_once_with("https://evalve.example.com")
         self.assertIn("Bundled dashboard: https://evalve.example.com/\n", output)
         self.assertNotIn("Evalve dashboard:", output)
+        self.assertIn(
+            "evalve credentials with the same AWS profile and region for the bootstrap Admin account login.",
+            output,
+        )
 
     def test_new_deployment_without_ui_image_uses_bundled_step_and_no_image(self):
         code, _, apply, _, _, output, _ = self.invoke(
@@ -453,6 +463,11 @@ class UpTest(unittest.TestCase):
         self.assertIn("so EC2 is replaced", output)
         self.assertIn("Evalve dashboard: https://evalve.example.com/\n", output)
         self.assertNotIn("Bundled dashboard:", output)
+        self.assertIn(
+            "evalve credentials with the same AWS profile and region for the bootstrap Admin account login.",
+            output,
+        )
+        self.assertIn("Checking the Evalve dashboard and the API routes", output)
         self.dashboard_check.assert_called_once_with(
             "https://evalve.example.com", "evalve"
         )

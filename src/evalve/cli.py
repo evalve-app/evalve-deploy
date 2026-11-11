@@ -86,7 +86,7 @@ def parser() -> argparse.ArgumentParser:
             "down", help="Save a verified database snapshot and remove the deployment."
         ),
         commands.add_parser(
-            "credentials", help="Print the bootstrap Kitaru dashboard login."
+            "credentials", help="Print the bootstrap Admin account login. It works in each dashboard that up prints."
         ),
     ):
         command.add_argument(
@@ -360,14 +360,14 @@ def up(args: argparse.Namespace) -> None:
         if restore_etag:
             aws.delete_document(lifecycle.OPERATION_KEY, restore_etag)
         if dashboard_image:
-            print("Checking the dashboard and the API routes…", flush=True)
+            print("Checking the Evalve dashboard and the API routes…", flush=True)
             check_dashboard(url, dashboard)
         for line in lifecycle.dashboard_lines(
             url, {"ui_image": dashboard_image, "dashboard": dashboard}
         ):
             print(line)
         print(
-            "Run evalve credentials with the same AWS profile and region for the bootstrap dashboard login."
+            "Run evalve credentials with the same AWS profile and region for the bootstrap Admin account login."
         )
 
 

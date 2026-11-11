@@ -126,3 +126,4 @@ The decisions are recorded in this repo's ADR 0001 and in `evalve-ui` ADRs 0001 
 
 - 2026-11-11: Tickets 01–05 are resolved, so the spec is resolved. No ticket covers this user story:
   - Story 35 ("dashboard" wording correct in both steps): the `credentials` help text at `src/evalve/cli.py:89` says "bootstrap Kitaru dashboard login". `GLOSSARY.md` lists "Kitaru dashboard" under _Avoid_.
+- 2026-11-11: Story 35 is fixed. The `credentials` help and the `up` closing line now name the bootstrap Admin account, and the readiness message names the Evalve dashboard.
