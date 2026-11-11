@@ -14,4 +14,27 @@ Evalve deploys the Evalve dashboard on the same EC2 host and the same hostname a
 - `evalve up --dashboard bundled|evalve` selects the rollout step from `evalve-ui` ADR 0003. `bundled` keeps the bundled dashboard at `/` and serves the Evalve dashboard at `/app/`. `evalve` serves the Evalve dashboard at `/` and redirects `/app/*` to `/*`. Evalve saves the value in S3 state. The default for a new deployment is `bundled` until step 2 is done. Each change replaces EC2.
 - Caddy sends `/api/*`, `/health*`, `/docs*`, `/redoc*` and `/openapi.json` to Kitaru in both steps. `infra/tests/deployment.tftest.hcl` asserts these routes.
 - After the readiness check, `evalve up` checks that the UI path returns the Evalve dashboard and that `/api/v1/info` returns Kitaru.
-- The UI image carries a label with the Kitaru version it targets. `evalve up` stops before Terraform runs when that label does not match the Kitaru version of `server_image`.
+- The UI image carries a label with the Kitaru version it targets. `evalve up` stops before Terraform runs when that label does not match the Kitaru version of `server_image`. The next section fixes how `up` reads both versions.
+
+## Kitaru version contract
+
+Added 2026-11-11 by ticket 01 of `.scratch/evalve-dashboard-rollout`.
+
+**The server image has no version label.** On 2026-11-11, we read the pinned index `zenmldocker/kitaru-server@sha256:05ea0048…1d47` from Docker Hub with an anonymous token. The `linux/amd64` config (`sha256:5cdb892f…d857`) and the `linux/arm64` config (`sha256:93c9dab9…534a`) have `Labels: null`. The index, the platform manifests and the platform descriptors have no annotations. The two attestation descriptors carry only `vnd.docker.reference.*` keys. The environment has only `PATH` and `PYTHON_VERSION`. So `up` cannot learn the Kitaru version from the server image.
+
+**Server side: a `kitaru_version` setting next to `server_image`.**
+
+- The value is a plain Kitaru version, for example `0.27.6`, with no `v` prefix.
+- The default is `0.27.6`. It sits beside the default digest in `infra/variables.tf` and beside `PHASE_TWO_IMAGE` in `src/evalve/lifecycle.py`. A change of one default changes the other in the same commit.
+- `kitaru_version` is saved and carried forward like `server_image`, so `stop`, `start`, `down` and restore keep it.
+- An Operator who overrides `server_image` must also give `kitaru_version`. If the saved state has no `kitaru_version`, `up` uses `0.27.6` only when `server_image` is the default digest. Otherwise `up` stops and asks for the version.
+- `up` checks the pair: it resolves the Docker Hub tag `zenmldocker/kitaru-server:<kitaru_version>` and requires its digest to equal the `server_image` digest. On 2026-11-11, tag `0.27.6` resolved to `sha256:05ea0048…1d47`. If the tag moves, does not exist, or Docker Hub does not answer, `up` stops with a message that names the tag and the digest. The check never passes silently.
+
+**UI side: the `io.github.evalve-app.kitaru.version` label.**
+
+- Every `evalve-ui` image sets the image config label `io.github.evalve-app.kitaru.version`. Its value is the Kitaru version whose `openapi.json` types the build uses, in the same format as `kitaru_version`, for example `0.27.6`.
+- We do not use `org.opencontainers.image.version`, because that key holds the image's own version.
+- `up` reads the label from the config blob `Labels` of the `linux/amd64` image, because the server AMI is x86_64. If `ui_image` is an index, `up` takes its `linux/amd64` manifest.
+- The label must equal `kitaru_version` as an exact string. A missing label, an unreadable label, or a different value stops `up` before Terraform runs, and the message names both versions.
+- Both version checks run only when `ui_image` is set. With an empty `ui_image`, `up` calls no registry, as today.
+- `evalve-ui` ADR 0004 records the same contract for the image build.
