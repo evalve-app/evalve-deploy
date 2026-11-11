@@ -216,9 +216,15 @@ def up(args: argparse.Namespace) -> None:
         print(
             f"Dashboard step: {dashboard} | Evalve dashboard image: {dashboard_image or 'none'}"
         )
-        print(
-            "A change of the dashboard step or image replaces EC2. RDS and the Elastic IP stay."
-        )
+        if (
+            not args.restore
+            and "deployment" in outputs
+            and (dashboard_image, dashboard)
+            != (existing.get("ui_image") or "", existing.get("dashboard") or "bundled")
+        ):
+            print(
+                "The dashboard step or image changes, so EC2 is replaced. RDS and the Elastic IP stay."
+            )
         estimate = args.monthly_estimate
         if estimate is None:
             print(

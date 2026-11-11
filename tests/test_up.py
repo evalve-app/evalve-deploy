@@ -166,7 +166,7 @@ class UpTest(unittest.TestCase):
         self.assertEqual(apply.call_args.args[2]["ui_image"], "")
         self.assertEqual(apply.call_args.args[2]["dashboard"], "bundled")
         self.assertIn("Dashboard step: bundled | Evalve dashboard image: none", output)
-        self.assertIn("A change of the dashboard step or image replaces EC2", output)
+        self.assertNotIn("replaces EC2", output)
 
     def test_ui_image_runs_the_evalve_dashboard_at_app_beside_the_bundled_one(self):
         code, _, apply, _, _, output, _ = self.invoke(
@@ -212,9 +212,10 @@ class UpTest(unittest.TestCase):
             f"Dashboard step: bundled | Evalve dashboard image: {UI_IMAGE}", output
         )
         self.assertIn("Evalve dashboard: https://evalve.example.com/app/\n", output)
+        self.assertNotIn("replaces EC2", output)
 
     def test_new_ui_image_replaces_the_saved_one(self):
-        newer = UI_IMAGE[:-1] + "f"
+        newer = UI_IMAGE[:-1] + "0"
         existing = {
             "deployment": {
                 "server_instance_type": "t3.small",
@@ -224,13 +225,33 @@ class UpTest(unittest.TestCase):
                 "dashboard": "bundled",
             },
         }
-        code, _, apply, _, _, _, _ = self.invoke(
+        code, _, apply, _, _, output, _ = self.invoke(
             ["--ui-image", newer, "--monthly-estimate", "36"],
             ["yes"],
             existing=existing,
         )
         self.assertEqual(code, 0)
         self.assertEqual(apply.call_args.args[2]["ui_image"], newer)
+        self.assertIn(
+            "The dashboard step or image changes, so EC2 is replaced. RDS and the Elastic IP stay.",
+            output,
+        )
+
+    def test_first_ui_image_on_an_existing_deployment_warns_of_ec2_replacement(self):
+        existing = {
+            "deployment": {
+                "server_instance_type": "t3.small",
+                "database_instance_class": "db.t4g.micro",
+                "application_secret_arn": SECRET,
+            },
+        }
+        code, _, _, _, _, output, _ = self.invoke(
+            ["--ui-image", UI_IMAGE, "--monthly-estimate", "36"],
+            ["yes"],
+            existing=existing,
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("so EC2 is replaced", output)
 
     def test_ui_image_that_is_not_an_evalve_ui_digest_is_rejected_before_aws(self):
         for reference in (
