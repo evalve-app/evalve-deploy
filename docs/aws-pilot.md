@@ -50,7 +50,7 @@ The Evalve dashboard from the `evalve-ui` repo replaces the Bundled dashboard in
 
 ### Step 1: test at /app/
 
-1. Get the digest of the `evalve-ui` build for the `/app/` base path.
+1. Get the digest of the `evalve-ui` build for the `/app/` base path. The build must target the Kitaru version of the server, or `up` stops before any AWS change.
 2. Run `evalve up --ui-image ghcr.io/evalve-app/evalve-ui@sha256:<digest>`. The dashboard step stays `bundled`.
 3. Confirm that `up` passes the dashboard and API checks and prints the Bundled dashboard URL and the Evalve dashboard URL at `/app/`.
 4. Sign in to the Bundled dashboard at `/` with your Admin account. Then open the Evalve dashboard at `/app/`. The same session must work in both.

@@ -28,6 +28,8 @@ Added 2026-11-11 by ticket 01 of `.scratch/evalve-dashboard-rollout`.
 - The default is `0.27.6`. It sits beside the default digest in `infra/variables.tf` and beside `PHASE_TWO_IMAGE` in `src/evalve/lifecycle.py`. A change of one default changes the other in the same commit.
 - `kitaru_version` is saved and carried forward like `server_image`, so `stop`, `start`, `down` and restore keep it.
 - An Operator who overrides `server_image` must also give `kitaru_version`. If the saved state has no `kitaru_version`, `up` uses `0.27.6` only when `server_image` is the default digest. Otherwise `up` stops and asks for the version.
+- Added by ticket 05: `up --kitaru-version <version>` gives the version. `up` has no option for `server_image`, so this option is the only way to answer that stop.
+- Added by ticket 05: this stop applies only when `ui_image` is set, like the two version checks below. Without `ui_image`, `up` behaves as before (spec user story 4), and Terraform records its default `0.27.6`. If that pair is wrong, the tag check stops the next `up` that sets `ui_image`.
 - `up` checks the pair: it resolves the Docker Hub tag `zenmldocker/kitaru-server:<kitaru_version>` and requires its digest to equal the `server_image` digest. On 2026-11-11, tag `0.27.6` resolved to `sha256:05ea0048…1d47`. If the tag moves, does not exist, or Docker Hub does not answer, `up` stops with a message that names the tag and the digest. The check never passes silently.
 
 **UI side: the `io.github.evalve-app.kitaru.version` label.**
@@ -37,6 +39,7 @@ Added 2026-11-11 by ticket 01 of `.scratch/evalve-dashboard-rollout`.
 - `up` reads the label from the config blob `Labels` of the `linux/amd64` image, because the server AMI is x86_64. If `ui_image` is an index, `up` takes its `linux/amd64` manifest.
 - The label must equal `kitaru_version` as an exact string. A missing label, an unreadable label, or a different value stops `up` before Terraform runs, and the message names both versions.
 - Both version checks run only when `ui_image` is set. With an empty `ui_image`, `up` calls no registry, as today.
+- Added by ticket 05: `up` runs both checks before the summary and the confirmation prompt, so a mismatch stops `up` before any AWS write.
 - `evalve-ui` ADR 0004 records the same contract for the image build.
 
 ## Container contract

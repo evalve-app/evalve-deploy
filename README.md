@@ -45,6 +45,8 @@ evalve up --ui-image ghcr.io/evalve-app/evalve-ui@sha256:<digest>
 
 `up` accepts only an immutable digest of the `evalve-ui` image in GitHub Container Registry under `evalve-app`. A tag such as `:latest` is rejected. Use an image that serves a build for the `/app/` base path on container port 3000.
 
+The Evalve dashboard image must target the same Kitaru version as `server_image`. Before Terraform runs, `up` reads the image label `io.github.evalve-app.kitaru.version` from the public registry and compares it with the Kitaru version of the server (`0.27.6` by default). `up` also checks that the Docker Hub tag `zenmldocker/kitaru-server:<version>` points to the `server_image` digest. If the versions differ, `up` stops and names both versions. If `up` cannot read a label or the tag, it stops with a message. The check never passes silently. Without `--ui-image`, `up` does not call a registry. If the saved `server_image` is not the default, pass its version with `--kitaru-version`.
+
 In step 1 (dashboard step `bundled`, the default), Caddy routes the paths on the deployment's hostname as follows:
 
 - `/api/*`, `/health*`, `/docs*`, `/redoc*` and `/openapi.json` go to Kitaru.

@@ -11,6 +11,7 @@ from evalve.readiness import wait_for_kitaru
 OPERATION_KEY = "evalve/operation.json"
 TF_SETTINGS = (
     "server_image",
+    "kitaru_version",
     "database_engine_version",
     "application_secret_version",
     "snapshot_id",
@@ -18,6 +19,8 @@ TF_SETTINGS = (
     "dashboard",
 )
 PHASE_TWO_IMAGE = "zenmldocker/kitaru-server@sha256:05ea00482c0adf4609a34d2c95575a6530ce5d60f6cea0e79716336d9e251d47"
+# The Kitaru version of PHASE_TWO_IMAGE. Change both values in the same commit.
+PHASE_TWO_KITARU_VERSION = "0.27.6"
 
 
 def dashboard_lines(url: str, deployment: dict) -> list[str]:

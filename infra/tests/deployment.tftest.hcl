@@ -182,6 +182,21 @@ run "no_ui_image_keeps_todays_caddy_and_units" {
     condition     = output.deployment.ui_image == "" && output.deployment.dashboard == "bundled"
     error_message = "A deployment without ui_image must record an empty image and the bundled step."
   }
+
+  assert {
+    condition     = output.deployment.kitaru_version == "0.27.6" && !strcontains(aws_instance.server.user_data, "0.27.6")
+    error_message = "The deployment must record the default Kitaru version without changing user_data."
+  }
+}
+
+run "reject_kitaru_version_with_v_prefix" {
+  command = plan
+
+  variables {
+    kitaru_version = "v0.27.6"
+  }
+
+  expect_failures = [var.kitaru_version]
 }
 
 run "bundled_step_serves_evalve_dashboard_at_app" {

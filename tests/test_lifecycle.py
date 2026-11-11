@@ -16,7 +16,10 @@ SECRET = f"arn:aws:secretsmanager:{REGION}:{ACCOUNT}:secret:evalve/application-t
 VERSION = "12345678-1234-1234-1234-123456789abc"
 SNAPSHOT = "evalve-20261110170000-123456789abc"
 UI_IMAGE = "ghcr.io/evalve-app/evalve-ui@sha256:" + "0123456789abcdef" * 4
+SERVER_DIGEST = "sha256:" + "a" * 64
 CONFIG = {
+    "server_image": f"zenmldocker/kitaru-server@{SERVER_DIGEST}",
+    "kitaru_version": "0.28.0",
     "server_instance_type": "t3.small",
     "database_instance_class": "db.t4g.micro",
     "backup_retention_days": 1,
@@ -294,6 +297,8 @@ class ShutdownTest(unittest.TestCase):
         self.assertEqual(manifest["configuration"]["dashboard"], "bundled")
         self.assertEqual(self.destroyed_with["ui_image"], UI_IMAGE)
         self.assertEqual(self.destroyed_with["dashboard"], "bundled")
+        self.assertEqual(manifest["configuration"]["kitaru_version"], "0.28.0")
+        self.assertEqual(self.destroyed_with["kitaru_version"], "0.28.0")
 
     def saved_snapshot(self):
         return next(
@@ -368,6 +373,14 @@ class RestoreTest(unittest.TestCase):
                         "check_dashboard",
                         side_effect=None if dashboard_ok else EvalveError("wrong route"),
                     ) as dashboard_check,
+                    patch.object(
+                        cli, "tag_digest", return_value=SERVER_DIGEST
+                    ) as tag_digest,
+                    patch.object(
+                        cli,
+                        "image_labels",
+                        return_value={cli.KITARU_VERSION_LABEL: "0.28.0"},
+                    ),
                 ):
                     code = cli.main(
                         ["up", "--restore", SNAPSHOT, "--monthly-estimate", "35.00"]
@@ -379,6 +392,10 @@ class RestoreTest(unittest.TestCase):
                 self.assertIsNone(variables["domain"])
                 self.assertEqual(variables["ui_image"], UI_IMAGE)
                 self.assertEqual(variables["dashboard"], "bundled")
+                self.assertEqual(variables["kitaru_version"], "0.28.0")
+                tag_digest.assert_called_once_with(
+                    "zenmldocker/kitaru-server", "0.28.0"
+                )
                 self.assertEqual(code, 0 if healthy and dashboard_ok else 1)
                 if healthy:
                     dashboard_check.assert_called_once_with(

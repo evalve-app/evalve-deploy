@@ -12,6 +12,9 @@ from evalve.aws import PUBLIC_ACCESS_BLOCK, Aws, AwsError
 ACCOUNT = "123456789012"
 SECRET = f"arn:aws:secretsmanager:us-east-1:{ACCOUNT}:secret:evalve/application-test"
 UI_IMAGE = "ghcr.io/evalve-app/evalve-ui@sha256:" + "0123456789abcdef" * 4
+SERVER_DIGEST = "sha256:05ea00482c0adf4609a34d2c95575a6530ce5d60f6cea0e79716336d9e251d47"
+CUSTOM_DIGEST = "sha256:" + "a" * 64
+VERSION_LABEL = cli.KITARU_VERSION_LABEL
 
 
 class CredentialsTest(unittest.TestCase):
@@ -70,6 +73,25 @@ class CredentialsTest(unittest.TestCase):
         aws.call.assert_not_called()
 
 
+def outcome(value):
+    """Mock arguments that raise an exception value or return any other value."""
+    if isinstance(value, Exception):
+        return {"side_effect": value}
+    return {"return_value": value}
+
+
+FIRST_UP_WITH_UI = [
+    "--server-type",
+    "t3.small",
+    "--database-class",
+    "db.t4g.micro",
+    "--ui-image",
+    UI_IMAGE,
+    "--monthly-estimate",
+    "36",
+]
+
+
 class UpTest(unittest.TestCase):
     def invoke(
         self,
@@ -79,6 +101,8 @@ class UpTest(unittest.TestCase):
         existing=None,
         caller_account=ACCOUNT,
         dashboard_error=None,
+        labels=None,
+        tag_digest=SERVER_DIGEST,
     ):
         aws = Mock(
             account=ACCOUNT,
@@ -108,6 +132,10 @@ class UpTest(unittest.TestCase):
             patch.object(
                 cli, "check_dashboard", side_effect=dashboard_error
             ) as self.dashboard_check,
+            patch.object(
+                cli, "image_labels", **outcome(labels or {VERSION_LABEL: "0.27.6"})
+            ) as self.labels,
+            patch.object(cli, "tag_digest", **outcome(tag_digest)) as self.tag_digest,
             patch("builtins.input", side_effect=answers),
             redirect_stdout(output),
             redirect_stderr(errors),
@@ -205,6 +233,129 @@ class UpTest(unittest.TestCase):
         self.dashboard_check.assert_called_once_with(
             "https://evalve.example.com", "bundled"
         )
+
+    def test_matching_kitaru_versions_continue_to_terraform(self):
+        code, aws, apply, _, _, _, errors = self.invoke(FIRST_UP_WITH_UI, ["yes"])
+        self.assertEqual(code, 0, errors)
+        self.tag_digest.assert_called_once_with(
+            "zenmldocker/kitaru-server", "0.27.6"
+        )
+        self.labels.assert_called_once_with(UI_IMAGE)
+        self.assertEqual(apply.call_args.args[2]["kitaru_version"], "0.27.6")
+
+    def assert_stopped_before_aws_writes(self, code, aws, apply):
+        self.assertEqual(code, 1)
+        apply.assert_not_called()
+        aws.ensure_bucket.assert_not_called()
+        aws.ensure_application_secret.assert_not_called()
+        aws.create_document.assert_not_called()
+
+    def test_kitaru_version_mismatch_stops_before_terraform_and_names_both(self):
+        code, aws, apply, _, _, _, errors = self.invoke(
+            FIRST_UP_WITH_UI, [], labels={VERSION_LABEL: "0.28.0"}
+        )
+        self.assert_stopped_before_aws_writes(code, aws, apply)
+        self.assertIn(
+            "The Evalve dashboard image targets Kitaru 0.28.0, "
+            "but the server runs Kitaru 0.27.6.",
+            errors,
+        )
+
+    def test_missing_version_label_stops_up(self):
+        code, aws, apply, _, _, _, errors = self.invoke(
+            FIRST_UP_WITH_UI, [], labels={"org.opencontainers.image.version": "1.0.0"}
+        )
+        self.assert_stopped_before_aws_writes(code, aws, apply)
+        self.assertIn(f"has no {VERSION_LABEL} label", errors)
+
+    def test_unreadable_labels_stop_up(self):
+        message = f"Evalve could not read the labels of {UI_IMAGE}."
+        code, aws, apply, _, _, _, errors = self.invoke(
+            FIRST_UP_WITH_UI, [], labels=EvalveError(message)
+        )
+        self.assert_stopped_before_aws_writes(code, aws, apply)
+        self.assertIn(message, errors)
+
+    def test_empty_ui_image_skips_the_version_check(self):
+        without_image = [a for a in FIRST_UP_WITH_UI if a not in ("--ui-image", UI_IMAGE)]
+        code, _, apply, _, _, _, _ = self.invoke(without_image, ["yes"])
+        self.assertEqual(code, 0)
+        apply.assert_called_once()
+        self.labels.assert_not_called()
+        self.tag_digest.assert_not_called()
+
+    def test_server_tag_on_another_digest_stops_up(self):
+        code, aws, apply, _, _, _, errors = self.invoke(
+            FIRST_UP_WITH_UI, [], tag_digest="sha256:" + "f" * 64
+        )
+        self.assert_stopped_before_aws_writes(code, aws, apply)
+        self.assertIn("zenmldocker/kitaru-server:0.27.6", errors)
+        self.assertIn(SERVER_DIGEST, errors)
+        self.labels.assert_not_called()
+
+    def test_unreadable_server_tag_stops_up(self):
+        message = "Evalve could not read zenmldocker/kitaru-server:0.27.6."
+        code, aws, apply, _, _, _, errors = self.invoke(
+            FIRST_UP_WITH_UI, [], tag_digest=EvalveError(message)
+        )
+        self.assert_stopped_before_aws_writes(code, aws, apply)
+        self.assertIn(message, errors)
+
+    def custom_server_deployment(self, **extra):
+        return {
+            "deployment": {
+                "server_instance_type": "t3.small",
+                "database_instance_class": "db.t4g.micro",
+                "application_secret_arn": SECRET,
+                "server_image": f"zenmldocker/kitaru-server@{CUSTOM_DIGEST}",
+                **extra,
+            },
+        }
+
+    def test_custom_server_image_without_a_version_stops_up(self):
+        code, aws, apply, _, _, _, errors = self.invoke(
+            ["--ui-image", UI_IMAGE, "--monthly-estimate", "36"],
+            [],
+            existing=self.custom_server_deployment(),
+        )
+        self.assert_stopped_before_aws_writes(code, aws, apply)
+        self.assertIn("Pass --kitaru-version", errors)
+        self.tag_digest.assert_not_called()
+
+    def test_kitaru_version_option_pairs_a_custom_server_image(self):
+        code, _, apply, _, _, _, errors = self.invoke(
+            [
+                "--ui-image",
+                UI_IMAGE,
+                "--kitaru-version",
+                "0.28.0",
+                "--monthly-estimate",
+                "36",
+            ],
+            ["yes"],
+            existing=self.custom_server_deployment(),
+            labels={VERSION_LABEL: "0.28.0"},
+            tag_digest=CUSTOM_DIGEST,
+        )
+        self.assertEqual(code, 0, errors)
+        self.tag_digest.assert_called_once_with("zenmldocker/kitaru-server", "0.28.0")
+        self.assertEqual(apply.call_args.args[2]["kitaru_version"], "0.28.0")
+
+    def test_saved_kitaru_version_is_reused(self):
+        code, _, apply, _, _, _, errors = self.invoke(
+            ["--ui-image", UI_IMAGE, "--monthly-estimate", "36"],
+            ["yes"],
+            existing=self.custom_server_deployment(kitaru_version="0.28.0"),
+            labels={VERSION_LABEL: "0.28.0"},
+            tag_digest=CUSTOM_DIGEST,
+        )
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(apply.call_args.args[2]["kitaru_version"], "0.28.0")
+
+    def test_kitaru_version_with_a_v_prefix_is_rejected(self):
+        with redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit):
+            cli.parser().parse_args(["up", "--kitaru-version", "v0.27.6"])
+        self.assertIn("no v prefix", errors.getvalue())
 
     def test_later_up_reuses_saved_ui_image_and_step(self):
         existing = {

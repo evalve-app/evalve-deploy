@@ -76,6 +76,18 @@ variable "server_image" {
   }
 }
 
+variable "kitaru_version" {
+  type        = string
+  default     = "0.27.6" # The Kitaru version of the default server_image. Change both together.
+  nullable    = false
+  description = "Kitaru version of server_image. Evalve compares it with the Evalve dashboard image label."
+
+  validation {
+    condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.kitaru_version))
+    error_message = "Use a Kitaru version such as 0.27.6, with no v prefix."
+  }
+}
+
 variable "application_secret_version" {
   type    = string
   default = null

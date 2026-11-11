@@ -14,6 +14,7 @@ output "deployment" {
     application_secret_version = var.application_secret_version
     database_engine_version    = var.database_engine_version
     server_image               = var.server_image
+    kitaru_version             = var.kitaru_version
     snapshot_id                = var.snapshot_id
     ui_image                   = var.ui_image
     dashboard                  = var.dashboard

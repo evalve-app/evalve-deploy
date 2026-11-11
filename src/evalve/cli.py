@@ -14,6 +14,10 @@ from decimal import Decimal
 from evalve import EvalveError, lifecycle, power, terraform
 from evalve.aws import Aws, read_application_secret
 from evalve.readiness import check_dashboard, wait_for_kitaru
+from evalve.registry import image_labels, tag_digest
+
+# Contract with evalve-ui (ADR 0001, "Kitaru version contract").
+KITARU_VERSION_LABEL = "io.github.evalve-app.kitaru.version"
 
 
 def monthly_estimate(value: str) -> Decimal:
@@ -54,6 +58,14 @@ def ui_image(value: str) -> str:
         raise argparse.ArgumentTypeError(
             "Use an immutable Evalve dashboard image digest such as "
             "ghcr.io/evalve-app/evalve-ui@sha256:<64 hex characters>."
+        )
+    return value
+
+
+def kitaru_version(value: str) -> str:
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value):
+        raise argparse.ArgumentTypeError(
+            "Use a Kitaru version such as 0.27.6, with no v prefix."
         )
     return value
 
@@ -117,6 +129,11 @@ def parser() -> argparse.ArgumentParser:
         help="Dashboard rollout step: bundled keeps the Bundled dashboard at / and serves the Evalve dashboard at /app/. evalve serves the Evalve dashboard at /.",
     )
     up.add_argument(
+        "--kitaru-version",
+        type=kitaru_version,
+        help="Kitaru version of the server image, such as 0.27.6. Needed only when the saved server image is not the default.",
+    )
+    up.add_argument(
         "--monthly-estimate",
         type=monthly_estimate,
         help="Reviewed AWS estimate in USD before credits.",
@@ -160,6 +177,46 @@ def verify_dns(domain: str, public_ip: str) -> None:
     if addresses != {public_ip}:
         raise EvalveError(
             f"DNS for {domain} must point only to {public_ip}. Update DNS and retry."
+        )
+
+
+def saved_kitaru_version(existing: dict, server_image: str) -> str | None:
+    if existing.get("kitaru_version"):
+        return existing["kitaru_version"]
+    if server_image == lifecycle.PHASE_TWO_IMAGE:
+        return lifecycle.PHASE_TWO_KITARU_VERSION
+    return None
+
+
+def check_kitaru_versions(
+    server_image: str, kitaru_version: str | None, dashboard_image: str
+) -> None:
+    """Stop unless the Evalve dashboard image targets the Kitaru version of the server."""
+    repository, digest = server_image.split("@", 1)
+    if not kitaru_version:
+        raise EvalveError(
+            f"Evalve does not know the Kitaru version of {server_image}. "
+            "Pass --kitaru-version and retry."
+        )
+    tagged = tag_digest(repository, kitaru_version)
+    if tagged != digest:
+        raise EvalveError(
+            f"Docker Hub tag {repository}:{kitaru_version} resolves to {tagged}, "
+            f"not to the server image digest {digest}. "
+            "Pass the --kitaru-version of the server image and retry."
+        )
+    targeted = image_labels(dashboard_image).get(KITARU_VERSION_LABEL)
+    if not targeted:
+        raise EvalveError(
+            f"The Evalve dashboard image {dashboard_image} has no {KITARU_VERSION_LABEL} label, "
+            f"so Evalve cannot compare it with Kitaru {kitaru_version}. "
+            "Pass a --ui-image build that has the label and retry."
+        )
+    if targeted != kitaru_version:
+        raise EvalveError(
+            f"The Evalve dashboard image targets Kitaru {targeted}, "
+            f"but the server runs Kitaru {kitaru_version}. "
+            f"Pass a --ui-image build for Kitaru {kitaru_version} and retry."
         )
 
 
@@ -216,6 +273,12 @@ def up(args: argparse.Namespace) -> None:
                 "The evalve dashboard step needs an Evalve dashboard image. "
                 "Pass --ui-image with a build for / and retry."
             )
+        server_image = existing.get("server_image", lifecycle.PHASE_TWO_IMAGE)
+        kitaru_version = args.kitaru_version or saved_kitaru_version(
+            existing, server_image
+        )
+        if dashboard_image:
+            check_kitaru_versions(server_image, kitaru_version, dashboard_image)
 
         print(
             f"AWS profile: {aws.profile} | Account: {aws.account} | Region: {aws.region}"
@@ -281,6 +344,7 @@ def up(args: argparse.Namespace) -> None:
                     for key in lifecycle.TF_SETTINGS
                     if key in existing
                 },
+                **({"kitaru_version": kitaru_version} if kitaru_version else {}),
                 "ui_image": dashboard_image,
                 "dashboard": dashboard,
             },
