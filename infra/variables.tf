@@ -110,7 +110,7 @@ variable "dashboard" {
   }
 
   validation {
-    condition     = var.dashboard == "bundled"
-    error_message = "This Evalve version supports only the bundled dashboard step."
+    condition     = var.dashboard == "bundled" || var.ui_image != ""
+    error_message = "The evalve dashboard step needs an Evalve dashboard image. Set ui_image to a build for /."
   }
 }

@@ -253,6 +253,111 @@ class UpTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("so EC2 is replaced", output)
 
+    def test_evalve_step_serves_the_evalve_dashboard_at_root(self):
+        existing = {
+            "deployment": {
+                "server_instance_type": "t3.small",
+                "database_instance_class": "db.t4g.micro",
+                "application_secret_arn": SECRET,
+                "ui_image": UI_IMAGE,
+                "dashboard": "bundled",
+            },
+        }
+        root_build = UI_IMAGE[:-1] + "0"
+        code, _, apply, _, _, output, _ = self.invoke(
+            [
+                "--dashboard",
+                "evalve",
+                "--ui-image",
+                root_build,
+                "--monthly-estimate",
+                "36",
+            ],
+            ["yes"],
+            existing=existing,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(apply.call_args.args[2]["ui_image"], root_build)
+        self.assertEqual(apply.call_args.args[2]["dashboard"], "evalve")
+        self.assertIn(
+            f"Dashboard step: evalve | Evalve dashboard image: {root_build}", output
+        )
+        self.assertIn("so EC2 is replaced", output)
+        self.assertIn("Evalve dashboard: https://evalve.example.com/\n", output)
+        self.assertNotIn("Bundled dashboard:", output)
+
+    def test_later_up_reuses_saved_evalve_step(self):
+        existing = {
+            "deployment": {
+                "server_instance_type": "t3.small",
+                "database_instance_class": "db.t4g.micro",
+                "application_secret_arn": SECRET,
+                "ui_image": UI_IMAGE,
+                "dashboard": "evalve",
+            },
+        }
+        code, _, apply, _, _, output, _ = self.invoke(
+            ["--monthly-estimate", "36"], ["yes"], existing=existing
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(apply.call_args.args[2]["dashboard"], "evalve")
+        self.assertEqual(apply.call_args.args[2]["ui_image"], UI_IMAGE)
+        self.assertNotIn("replaces EC2", output)
+        self.assertIn("Evalve dashboard: https://evalve.example.com/\n", output)
+
+    def test_evalve_step_can_change_back_to_bundled(self):
+        existing = {
+            "deployment": {
+                "server_instance_type": "t3.small",
+                "database_instance_class": "db.t4g.micro",
+                "application_secret_arn": SECRET,
+                "ui_image": UI_IMAGE,
+                "dashboard": "evalve",
+            },
+        }
+        app_build = UI_IMAGE[:-1] + "0"
+        code, _, apply, _, _, output, _ = self.invoke(
+            [
+                "--dashboard",
+                "bundled",
+                "--ui-image",
+                app_build,
+                "--monthly-estimate",
+                "36",
+            ],
+            ["yes"],
+            existing=existing,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(apply.call_args.args[2]["dashboard"], "bundled")
+        self.assertEqual(apply.call_args.args[2]["ui_image"], app_build)
+        self.assertIn("so EC2 is replaced", output)
+        self.assertIn("Bundled dashboard: https://evalve.example.com/\n", output)
+        self.assertIn("Evalve dashboard: https://evalve.example.com/app/\n", output)
+
+    def test_evalve_step_without_ui_image_fails_before_aws_writes(self):
+        existing = {
+            "deployment": {
+                "server_instance_type": "t3.small",
+                "database_instance_class": "db.t4g.micro",
+                "application_secret_arn": SECRET,
+            },
+        }
+        code, aws, apply, _, _, _, errors = self.invoke(
+            ["--dashboard", "evalve", "--monthly-estimate", "36"],
+            ["yes"],
+            existing=existing,
+        )
+        self.assertEqual(code, 1)
+        self.assertIn(
+            "The evalve dashboard step needs an Evalve dashboard image. Pass --ui-image",
+            errors,
+        )
+        aws.ensure_bucket.assert_not_called()
+        aws.ensure_application_secret.assert_not_called()
+        aws.create_document.assert_not_called()
+        apply.assert_not_called()
+
     def test_ui_image_that_is_not_an_evalve_ui_digest_is_rejected_before_aws(self):
         for reference in (
             "ghcr.io/evalve-app/evalve-ui:latest",

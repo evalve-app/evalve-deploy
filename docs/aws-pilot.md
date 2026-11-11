@@ -44,6 +44,40 @@ At the prompt, approve only after the displayed account, region, backup retentio
 3. Ask the teammate to set a password, sign in, create their own API key, and record one synthetic session. Record the agent name and session ID for the recovery drill. Keep credentials and invitation links out of the test log.
 4. Confirm the signed-in teammate can open the session and see its input, output, and recorded steps. Verify unauthenticated API access returns HTTP 401.
 
+## Evalve dashboard rollout
+
+The Evalve dashboard from the `evalve-ui` repo replaces the Bundled dashboard in two steps. Teammates keep the same address in both steps. Their agents' `KITARU_API_URL` and API keys do not change. Each change of the step or the image replaces EC2, so plan a short outage. The [README](../README.md#evalve-dashboard) describes the routes for each step.
+
+### Step 1: test at /app/
+
+1. Get the digest of the `evalve-ui` build for the `/app/` base path.
+2. Run `evalve up --ui-image ghcr.io/evalve-app/evalve-ui@sha256:<digest>`. The dashboard step stays `bundled`.
+3. Confirm that `up` prints the Bundled dashboard URL and the Evalve dashboard URL at `/app/`.
+4. Sign in to the Bundled dashboard at `/` with your Admin account. Then open the Evalve dashboard at `/app/`. The same session must work in both.
+5. Do each check in the full-parity list below in the Evalve dashboard. Teammates continue to use the Bundled dashboard at `/`.
+
+### Full-parity list
+
+Move to step 2 only when the Evalve dashboard passes every check (`evalve-ui` ADR 0003):
+
+- Every route of the Bundled dashboard works in the Evalve dashboard.
+- Sign-in works.
+- An invitation link (`/activate-user?user=<id>&token=<token>`) works.
+- `kitaru login` opens `/devices/verify`, and the page works.
+- **Settings → API keys** works.
+- **Settings → Members** works.
+
+### Step 2: switch to the Evalve dashboard at /
+
+1. Get the digest of the `evalve-ui` build for the `/` base path.
+2. Run `evalve up --dashboard evalve --ui-image ghcr.io/evalve-app/evalve-ui@sha256:<digest of the build for />`.
+3. Confirm that `up` prints only the Evalve dashboard URL at `/`.
+4. Open an `/app/...` link from step 1. It must redirect to the same path and query without `/app`.
+5. Open an invitation link from step 1. It must still work.
+6. Confirm that a Teammate's agent still records a session with its existing API key.
+
+To go back to step 1, run `evalve up --dashboard bundled --ui-image ghcr.io/evalve-app/evalve-ui@sha256:<digest of the build for /app/>`. Always pass the `/app/` build. Without `--ui-image`, `up` reuses the saved build for `/`.
+
 ## Recovery drill
 
 | Check | Pass condition |

@@ -265,11 +265,67 @@ run "reject_unknown_dashboard_step" {
   expect_failures = [var.dashboard]
 }
 
-run "reject_evalve_step_until_supported" {
-  command = plan
+run "evalve_step_serves_evalve_dashboard_at_root" {
+  command = apply
 
   variables {
     ui_image  = "ghcr.io/evalve-app/evalve-ui@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    dashboard = "evalve"
+  }
+
+  assert {
+    condition = strcontains(aws_instance.server.user_data, <<-CADDY
+      203-0-113-10.sslip.io {
+        @kitaru_api path /api/* /health* /docs* /redoc* /openapi.json
+        handle @kitaru_api {
+          reverse_proxy 127.0.0.1:8000
+        }
+        @app_prefix path /app /app/*
+        handle @app_prefix {
+          # Caddy sorts redir before uri inside handle. route keeps this order.
+          route {
+            uri strip_prefix /app
+            redir {uri} permanent
+          }
+        }
+        handle {
+          reverse_proxy 127.0.0.1:3000
+        }
+      }
+      CADDY
+    )
+    error_message = "Caddy must send the API paths to Kitaru, redirect /app and /app/* to the path without /app, and send all other paths to the dashboard container."
+  }
+
+  assert {
+    condition = (
+      strcontains(aws_instance.server.user_data, "--publish 127.0.0.1:3000:3000 \\\n") &&
+      strcontains(aws_instance.server.user_data, "systemctl enable --now --no-block evalve-kitaru.service evalve-refresh.timer evalve-caddy.service evalve-ui.service\n")
+    )
+    error_message = "The evalve step must run the dashboard unit on loopback only and start it on boot."
+  }
+
+  assert {
+    condition = (
+      strcontains(aws_instance.server.user_data, "echo '${filebase64("${path.module}/refresh.py")}' | base64 -d > /etc/evalve/refresh.py") &&
+      !strcontains(file("${path.module}/refresh.py"), "EXTERNAL_UI") &&
+      !strcontains(file("${path.module}/refresh.py"), "DASHBOARD_URL") &&
+      !strcontains(aws_instance.server.user_data, "EXTERNAL_UI") &&
+      !strcontains(aws_instance.server.user_data, "DASHBOARD_URL")
+    )
+    error_message = "Evalve must not set Kitaru's EXTERNAL_UI or DASHBOARD_URL."
+  }
+
+  assert {
+    condition     = output.deployment.ui_image == var.ui_image && output.deployment.dashboard == "evalve"
+    error_message = "The deployment output must record ui_image and the evalve step."
+  }
+}
+
+run "reject_evalve_step_without_ui_image" {
+  command = plan
+
+  variables {
     dashboard = "evalve"
   }
 

@@ -112,6 +112,11 @@ def parser() -> argparse.ArgumentParser:
         help="Evalve dashboard image pinned by digest. Step 1 serves it at /app/ beside the Bundled dashboard.",
     )
     up.add_argument(
+        "--dashboard",
+        choices=("bundled", "evalve"),
+        help="Dashboard rollout step: bundled keeps the Bundled dashboard at / and serves the Evalve dashboard at /app/. evalve serves the Evalve dashboard at /.",
+    )
+    up.add_argument(
         "--monthly-estimate",
         type=monthly_estimate,
         help="Reviewed AWS estimate in USD before credits.",
@@ -200,8 +205,17 @@ def up(args: argparse.Namespace) -> None:
                     "Run up with the default sslip.io address before switching to a custom domain."
                 )
             verify_dns(domain, public_ip)
-        dashboard_image = args.ui_image or existing.get("ui_image") or ""
-        dashboard = existing.get("dashboard") or "bundled"
+        saved_dashboard = (
+            existing.get("ui_image") or "",
+            existing.get("dashboard") or "bundled",
+        )
+        dashboard_image = args.ui_image or saved_dashboard[0]
+        dashboard = args.dashboard or saved_dashboard[1]
+        if dashboard == "evalve" and not dashboard_image:
+            raise EvalveError(
+                "The evalve dashboard step needs an Evalve dashboard image. "
+                "Pass --ui-image with a build for / and retry."
+            )
 
         print(
             f"AWS profile: {aws.profile} | Account: {aws.account} | Region: {aws.region}"
@@ -219,8 +233,7 @@ def up(args: argparse.Namespace) -> None:
         if (
             not args.restore
             and "deployment" in outputs
-            and (dashboard_image, dashboard)
-            != (existing.get("ui_image") or "", existing.get("dashboard") or "bundled")
+            and (dashboard_image, dashboard) != saved_dashboard
         ):
             print(
                 "The dashboard step or image changes, so EC2 is replaced. RDS and the Elastic IP stay."

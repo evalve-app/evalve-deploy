@@ -46,6 +46,7 @@ ${hostname} {
   handle @kitaru_api {
     reverse_proxy 127.0.0.1:8000
   }
+%{ if dashboard == "bundled" ~}
   @evalve_dashboard path /app /app/*
   handle @evalve_dashboard {
     reverse_proxy 127.0.0.1:3000
@@ -53,6 +54,19 @@ ${hostname} {
   handle {
     reverse_proxy 127.0.0.1:8000
   }
+%{ else ~}
+  @app_prefix path /app /app/*
+  handle @app_prefix {
+    # Caddy sorts redir before uri inside handle. route keeps this order.
+    route {
+      uri strip_prefix /app
+      redir {uri} permanent
+    }
+  }
+  handle {
+    reverse_proxy 127.0.0.1:3000
+  }
+%{ endif ~}
 %{ endif ~}
 }
 CADDY

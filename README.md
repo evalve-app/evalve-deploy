@@ -35,7 +35,7 @@ If Terraform fails to save state to S3, Evalve prints the path of its local reco
 
 To switch to a custom domain, point its A record at the deployment's Elastic IP, wait for DNS to resolve, then run `evalve up --domain <hostname>`. Changing the hostname replaces EC2, so expect a short outage. The Elastic IP and RDS database are retained.
 
-## Evalve dashboard (step 1)
+## Evalve dashboard
 
 The Evalve dashboard is the web UI from the `evalve-ui` repo. The Bundled dashboard is the web UI inside the Kitaru server image. To test the Evalve dashboard on the shared server while Teammates keep the Bundled dashboard, pass its image by digest:
 
@@ -53,7 +53,25 @@ In step 1 (dashboard step `bundled`, the default), Caddy routes the paths on the
 
 The Evalve dashboard container listens only on `127.0.0.1:3000`. It restarts on failure, starts on boot, and rotates its logs like the Kitaru container. After `up`, Evalve prints the Bundled dashboard URL and the Evalve dashboard URL.
 
-Evalve saves the image and the dashboard step in S3 state. A later `up` without `--ui-image` reuses the saved image, and `stop`, `start`, `down` and `up --restore` keep both values. The `up` summary shows the step and the image before you confirm. A change of the step or the image replaces EC2, so expect a short outage. The Elastic IP and RDS database are retained. Without `--ui-image`, the deployment works as before and serves only the Bundled dashboard.
+### Step 2: switch to the Evalve dashboard
+
+When the Evalve dashboard has full parity with the Bundled dashboard, switch the step and pass an image that serves a build for the `/` base path:
+
+```sh
+evalve up --dashboard evalve --ui-image ghcr.io/evalve-app/evalve-ui@sha256:<digest of the build for />
+```
+
+In step 2 (dashboard step `evalve`), Caddy routes the paths as follows:
+
+- `/api/*`, `/health*`, `/docs*`, `/redoc*` and `/openapi.json` go to Kitaru.
+- `/app` and `/app/*` redirect permanently (HTTP 301) to the same path and query without the `/app` prefix. For example, `/app/sessions/42?tab=steps` goes to `/sessions/42?tab=steps`.
+- All other paths go to the Evalve dashboard container. The Bundled dashboard is no longer reachable.
+
+Evalve does not set Kitaru's `EXTERNAL_UI` or `DASHBOARD_URL`, and the CORS and cookie settings do not change. `--dashboard evalve` with no saved or given image fails before any AWS change. After `up`, Evalve prints only the Evalve dashboard URL. To go back to step 1, run `evalve up --dashboard bundled --ui-image ghcr.io/evalve-app/evalve-ui@sha256:<digest of the build for /app/>`. Always pass the `/app/` build. Without `--ui-image`, `up` reuses the saved build for `/`.
+
+### Saved settings
+
+Evalve saves the image and the dashboard step in S3 state. A later `up` without `--ui-image` or `--dashboard` reuses the saved values, and `stop`, `start`, `down` and `up --restore` keep both values. The `up` summary shows the step and the image before you confirm. A change of the step or the image replaces EC2, so expect a short outage. The Elastic IP and RDS database are retained. Without `--ui-image`, the deployment works as before and serves only the Bundled dashboard.
 
 ## Stop, start, and recover
 

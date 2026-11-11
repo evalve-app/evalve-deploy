@@ -21,6 +21,8 @@ PHASE_TWO_IMAGE = "zenmldocker/kitaru-server@sha256:05ea00482c0adf4609a34d2c9557
 
 
 def dashboard_lines(url: str, deployment: dict) -> list[str]:
+    if deployment.get("dashboard") == "evalve":
+        return [f"Evalve dashboard: {url}/"]
     lines = [f"Bundled dashboard: {url}/"]
     if deployment.get("ui_image"):
         lines.append(f"Evalve dashboard: {url}/app/")
