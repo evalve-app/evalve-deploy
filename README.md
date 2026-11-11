@@ -60,12 +60,13 @@ If teardown is interrupted, rerun `down` to use the same snapshot. If restoratio
 ## Local checks
 
 ```sh
-PYTHONPATH=src python3 -m unittest discover -s tests
-python3 -m unittest discover -s infra/tests -p 'test_*.py'
-terraform -chdir=infra init -backend=false
-terraform -chdir=infra fmt -check -recursive
-terraform -chdir=infra validate
-terraform -chdir=infra test
+scripts/check.sh
+```
+
+The script runs the ticket status lint, the Python unit tests, and the Terraform format, validate and test commands. It stops at the first failure. The `Local checks` GitHub Actions workflow runs the same script on every push and pull request. To run it before each commit, enable the hook one time per clone:
+
+```sh
+git config core.hooksPath .githooks
 ```
 
 The Terraform tests use a mocked AWS provider. The live pilot verifies HTTPS, teammate sign-in and recording, and the full backup and restore workflow in AWS.
