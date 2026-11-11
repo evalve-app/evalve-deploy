@@ -1,6 +1,6 @@
 # Evalve
 
-Evalve deploys one shared Kitaru server to AWS. The operator uses the Evalve CLI. Teammates sign in through a browser invitation and connect their agents with an API key from the Kitaru dashboard.
+Evalve deploys one shared Kitaru server to AWS. The operator uses the Evalve CLI. Teammates sign in through a browser invitation and connect their agents with an API key from the Bundled dashboard or the Evalve dashboard.
 
 - [Teammate quickstart](docs/team-quickstart.md)
 - [AWS pilot runbook and cost estimate](docs/aws-pilot.md)

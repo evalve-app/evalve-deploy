@@ -138,7 +138,7 @@ def power_change(aws: Aws, action: str) -> None:
         print("Starting EC2 and checking the existing HTTPS endpoint…", flush=True)
         power.start(aws, outputs["instance_id"])
         wait_for_kitaru(outputs["url"])
-        print(f"Kitaru dashboard: {outputs['url']}")
+        print(f"Bundled dashboard: {outputs['url']}")
     else:
         print("Draining Kitaru before stopping EC2…", flush=True)
         power.stop(aws, outputs["instance_id"])
