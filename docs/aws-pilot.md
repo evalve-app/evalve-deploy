@@ -52,7 +52,7 @@ The Evalve dashboard from the `evalve-ui` repo replaces the Bundled dashboard in
 
 1. Get the digest of the `evalve-ui` build for the `/app/` base path.
 2. Run `evalve up --ui-image ghcr.io/evalve-app/evalve-ui@sha256:<digest>`. The dashboard step stays `bundled`.
-3. Confirm that `up` prints the Bundled dashboard URL and the Evalve dashboard URL at `/app/`.
+3. Confirm that `up` passes the dashboard and API checks and prints the Bundled dashboard URL and the Evalve dashboard URL at `/app/`.
 4. Sign in to the Bundled dashboard at `/` with your Admin account. Then open the Evalve dashboard at `/app/`. The same session must work in both.
 5. Do each check in the full-parity list below in the Evalve dashboard. Teammates continue to use the Bundled dashboard at `/`.
 

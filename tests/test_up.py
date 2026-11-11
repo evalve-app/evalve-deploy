@@ -71,7 +71,15 @@ class CredentialsTest(unittest.TestCase):
 
 
 class UpTest(unittest.TestCase):
-    def invoke(self, args, answers, *, existing=None, caller_account=ACCOUNT):
+    def invoke(
+        self,
+        args,
+        answers,
+        *,
+        existing=None,
+        caller_account=ACCOUNT,
+        dashboard_error=None,
+    ):
         aws = Mock(
             account=ACCOUNT,
             region="us-east-1",
@@ -97,6 +105,9 @@ class UpTest(unittest.TestCase):
             ) as apply,
             patch.object(cli, "verify_dns") as dns,
             patch.object(cli, "wait_for_kitaru") as ready,
+            patch.object(
+                cli, "check_dashboard", side_effect=dashboard_error
+            ) as self.dashboard_check,
             patch("builtins.input", side_effect=answers),
             redirect_stdout(output),
             redirect_stderr(errors),
@@ -167,6 +178,7 @@ class UpTest(unittest.TestCase):
         self.assertEqual(apply.call_args.args[2]["dashboard"], "bundled")
         self.assertIn("Dashboard step: bundled | Evalve dashboard image: none", output)
         self.assertNotIn("replaces EC2", output)
+        self.dashboard_check.assert_not_called()
 
     def test_ui_image_runs_the_evalve_dashboard_at_app_beside_the_bundled_one(self):
         code, _, apply, _, _, output, _ = self.invoke(
@@ -190,6 +202,9 @@ class UpTest(unittest.TestCase):
         )
         self.assertIn("Bundled dashboard: https://evalve.example.com/\n", output)
         self.assertIn("Evalve dashboard: https://evalve.example.com/app/\n", output)
+        self.dashboard_check.assert_called_once_with(
+            "https://evalve.example.com", "bundled"
+        )
 
     def test_later_up_reuses_saved_ui_image_and_step(self):
         existing = {
@@ -285,6 +300,30 @@ class UpTest(unittest.TestCase):
         self.assertIn("so EC2 is replaced", output)
         self.assertIn("Evalve dashboard: https://evalve.example.com/\n", output)
         self.assertNotIn("Bundled dashboard:", output)
+        self.dashboard_check.assert_called_once_with(
+            "https://evalve.example.com", "evalve"
+        )
+
+    def test_failed_dashboard_check_stops_up_with_its_next_step(self):
+        message = "https://evalve.example.com/app/ returned the Bundled dashboard or Kitaru, not the Evalve dashboard."
+        code, _, _, ready, _, output, errors = self.invoke(
+            [
+                "--server-type",
+                "t3.small",
+                "--database-class",
+                "db.t4g.micro",
+                "--ui-image",
+                UI_IMAGE,
+                "--monthly-estimate",
+                "36",
+            ],
+            ["yes"],
+            dashboard_error=EvalveError(message),
+        )
+        self.assertEqual(code, 1)
+        ready.assert_called_once_with("https://evalve.example.com")
+        self.assertIn(message, errors)
+        self.assertNotIn("Evalve dashboard: https://", output)
 
     def test_later_up_reuses_saved_evalve_step(self):
         existing = {

@@ -13,7 +13,7 @@ from decimal import Decimal
 
 from evalve import EvalveError, lifecycle, power, terraform
 from evalve.aws import Aws, read_application_secret
-from evalve.readiness import wait_for_kitaru
+from evalve.readiness import check_dashboard, wait_for_kitaru
 
 
 def monthly_estimate(value: str) -> Decimal:
@@ -290,6 +290,9 @@ def up(args: argparse.Namespace) -> None:
         wait_for_kitaru(url)
         if restore_etag:
             aws.delete_document(lifecycle.OPERATION_KEY, restore_etag)
+        if dashboard_image:
+            print("Checking the dashboard and the API routes…", flush=True)
+            check_dashboard(url, dashboard)
         for line in lifecycle.dashboard_lines(
             url, {"ui_image": dashboard_image, "dashboard": dashboard}
         ):

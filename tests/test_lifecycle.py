@@ -323,8 +323,8 @@ class RestoreTest(unittest.TestCase):
     def test_restore_cli_passes_saved_configuration_and_retains_checkpoint_until_ready(
         self,
     ):
-        for healthy in (False, True):
-            with self.subTest(healthy=healthy):
+        for healthy, dashboard_ok in ((False, True), (True, True), (True, False)):
+            with self.subTest(healthy=healthy, dashboard_ok=dashboard_ok):
                 aws = Mock(account=ACCOUNT, region=REGION, profile="evalve")
                 aws.state_outputs.return_value = {}
                 aws.caller_account.return_value = ACCOUNT
@@ -363,6 +363,11 @@ class RestoreTest(unittest.TestCase):
                         "wait_for_kitaru",
                         side_effect=None if healthy else EvalveError("not ready"),
                     ),
+                    patch.object(
+                        cli,
+                        "check_dashboard",
+                        side_effect=None if dashboard_ok else EvalveError("wrong route"),
+                    ) as dashboard_check,
                 ):
                     code = cli.main(
                         ["up", "--restore", SNAPSHOT, "--monthly-estimate", "35.00"]
@@ -374,8 +379,13 @@ class RestoreTest(unittest.TestCase):
                 self.assertIsNone(variables["domain"])
                 self.assertEqual(variables["ui_image"], UI_IMAGE)
                 self.assertEqual(variables["dashboard"], "bundled")
-                self.assertEqual(code, 0 if healthy else 1)
+                self.assertEqual(code, 0 if healthy and dashboard_ok else 1)
                 if healthy:
+                    dashboard_check.assert_called_once_with(
+                        "https://example.sslip.io", "bundled"
+                    )
+                    # The restore is done once Kitaru is ready, so a later
+                    # up that fixes the dashboard does not need --restore.
                     aws.delete_document.assert_called_once_with(
                         lifecycle.OPERATION_KEY, '"restore-etag"'
                     )

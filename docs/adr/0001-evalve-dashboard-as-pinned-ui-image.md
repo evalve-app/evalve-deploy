@@ -45,4 +45,5 @@ Added 2026-11-11 by ticket 02 of `.scratch/evalve-dashboard-rollout`.
 
 - The `evalve-ui` image listens on container port 3000. Evalve publishes it as `127.0.0.1:3000:3000`.
 - Caddy keeps the `/app` prefix when it proxies `/app` and `/app/*` to the container. The step 1 image therefore serves its build under `/app/`.
-- The `evalve-ui` repo has not yet recorded either point. It must match them, or this section changes.
+- Added by ticket 04: the `index.html` of every `evalve-ui` build has the title `<title>Evalve</title>` and is served as `text/html`. After `up`, Evalve reads the dashboard path (`/app/` in step 1, `/` in step 2) and requires that title. The Bundled dashboard has `<title>Kitaru</title>` and `data-app="kitaru"`, so a route that sends the dashboard path to Kitaru fails the check.
+- The `evalve-ui` repo has not yet recorded these points. It must match them, or this section changes.

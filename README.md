@@ -71,7 +71,7 @@ Evalve does not set Kitaru's `EXTERNAL_UI` or `DASHBOARD_URL`, and the CORS and 
 
 ### Saved settings
 
-Evalve saves the image and the dashboard step in S3 state. A later `up` without `--ui-image` or `--dashboard` reuses the saved values, and `stop`, `start`, `down` and `up --restore` keep both values. The `up` summary shows the step and the image before you confirm. A change of the step or the image replaces EC2, so expect a short outage. The Elastic IP and RDS database are retained. Without `--ui-image`, the deployment works as before and serves only the Bundled dashboard.
+Evalve saves the image and the dashboard step in S3 state. A later `up` without `--ui-image` or `--dashboard` reuses the saved values, and `stop`, `start`, `down` and `up --restore` keep both values. The `up` summary shows the step and the image before you confirm. When an image is set, `up` checks two more things on the public URL after Kitaru is ready: the dashboard path (`/app/` in step 1, `/` in step 2) must return the Evalve dashboard, and `/api/v1/info` must return Kitaru JSON. If a check fails, `up` names the path and one next step. A change of the step or the image replaces EC2, so expect a short outage. The Elastic IP and RDS database are retained. Without `--ui-image`, the deployment works as before and serves only the Bundled dashboard.
 
 ## Stop, start, and recover
 
