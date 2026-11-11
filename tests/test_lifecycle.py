@@ -104,7 +104,7 @@ class PowerChangeTest(unittest.TestCase):
         self.assertIn("Bundled dashboard: https://example.com/\n", output)
         self.assertIn("Evalve dashboard: https://example.com/app/\n", output)
 
-    def test_stop_leaves_the_saved_dashboard_settings_unchanged(self):
+    def test_stop_runs_no_terraform_and_writes_no_state(self):
         _, _, stop = self.invoke("stop")
         stop.assert_called_once()
 

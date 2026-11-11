@@ -232,7 +232,7 @@ class UpTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(apply.call_args.args[2]["ui_image"], newer)
 
-    def test_mutable_ui_image_reference_is_rejected_before_aws(self):
+    def test_ui_image_that_is_not_an_evalve_ui_digest_is_rejected_before_aws(self):
         for reference in (
             "ghcr.io/evalve-app/evalve-ui:latest",
             "ghcr.io/other/evalve-ui@sha256:" + "0" * 64,
