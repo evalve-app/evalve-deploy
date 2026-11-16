@@ -35,6 +35,10 @@ If Terraform fails to save state to S3, Evalve prints the path of its local reco
 
 To switch to a custom domain, point its A record at the deployment's Elastic IP, wait for DNS to resolve, then run `evalve up --domain <hostname>`. Changing the hostname replaces EC2, so expect a short outage. The Elastic IP and RDS database are retained.
 
+## Evalve dashboard
+
+The `evalve-ui` repo deploys the Evalve dashboard to `https://dashboard.<hostname>` on this server. Run its `scripts/deploy-dashboard.sh` after each `up` that makes a new server or replaces EC2, including `up --restore`. If you use `--domain`, point `dashboard.<domain>` at the server too. ADR 0003 lists the server files that the deploy depends on.
+
 ## Stop, start, and recover
 
 ```sh

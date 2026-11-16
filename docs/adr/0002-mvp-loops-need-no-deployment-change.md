@@ -8,7 +8,7 @@ This replaces, for the MVP, the part of `evalve-ui` ADR 0002 that puts a Loop st
 
 ## Consequences
 
-- The Caddy routes in ADR 0001 do not change. The Loop pages use the same Kitaru API paths as the rest of the Evalve dashboard.
+- The Caddy routes do not change. The Loop pages use the same Kitaru API paths as the rest of the Evalve dashboard. ADR 0003 says where those routes live.
 - `evalve-ui` must change before step 2. Its Loop client calls `/loops-api/` (`src/api/loops/`), its spec allows changes to the model and the model parameters, and its tickets 13 and 14 add Gates and Loop decisions. This repo records the conflict but does not edit `evalve-ui`.
 - `evalve-ui` ADR 0002 limits the local worker with `KITARU_WORKER_SCOPE` to the agent version that the Loop tests. Because each Round makes a new agent version, that rule must change in `evalve-ui`.
 - If a later version adds Gates or other Loop state that Kitaru cannot store, reopen this decision. The Loop state API would then need a container, a route, and a schema here.
