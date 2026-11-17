@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from evalve import EvalveError, backup, power, terraform
 from evalve.aws import STATE_KEY, Aws
-from evalve.readiness import wait_for_kitaru
+from evalve.readiness import wait_for_backend, wait_for_kitaru
 
 OPERATION_KEY = "evalve/operation.json"
 TF_SETTINGS = (
@@ -14,6 +14,7 @@ TF_SETTINGS = (
     "database_engine_version",
     "application_secret_version",
     "snapshot_id",
+    "backend_image",
 )
 PHASE_TWO_IMAGE = "zenmldocker/kitaru-server@sha256:05ea00482c0adf4609a34d2c95575a6530ce5d60f6cea0e79716336d9e251d47"
 
@@ -138,6 +139,10 @@ def power_change(aws: Aws, action: str) -> None:
         print("Starting EC2 and checking the existing HTTPS endpoint…", flush=True)
         power.start(aws, outputs["instance_id"])
         wait_for_kitaru(outputs["url"])
+        backend = outputs.get("deployment", {}).get("backend_image")
+        if backend:
+            print("Checking the Evalve backend…", flush=True)
+            wait_for_backend(outputs["url"], backend)
         print(f"Bundled dashboard: {outputs['url']}")
     else:
         print("Draining Kitaru before stopping EC2…", flush=True)

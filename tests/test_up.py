@@ -98,14 +98,24 @@ class UpTest(unittest.TestCase):
                 return_value=nullcontext(Path("/unused")),
             ),
             patch.object(
-                terraform, "apply", return_value={"url": "https://evalve.example.com"}
+                terraform,
+                "apply",
+                return_value={
+                    "url": "https://evalve.example.com",
+                    "instance_id": "i-0123",
+                },
             ) as apply,
             patch.object(cli, "verify_dns") as dns,
             patch.object(cli, "wait_for_kitaru") as ready,
+            patch.object(cli.power, "deploy_backend") as self.deploy,
+            patch.object(cli, "wait_for_backend") as self.backend_check,
             patch("builtins.input", side_effect=answers),
             redirect_stdout(output),
             redirect_stderr(errors),
         ):
+            # Order: Kitaru is ready, then the image is deployed, then checked.
+            ready.side_effect = lambda *a: self.deploy.assert_not_called()
+            self.deploy.side_effect = lambda *a: self.backend_check.assert_not_called()
             code = cli.main(["up", *args])
         factory.assert_called_once_with("evalve", None)
         return code, aws, apply, ready, dns, output.getvalue(), errors.getvalue()
@@ -216,6 +226,115 @@ class UpTest(unittest.TestCase):
         self.assertEqual(apply.call_args.args[2]["domain"], "evalve.example.com")
         self.assertEqual(apply.call_args.args[2]["server_instance_type"], "t3.small")
         self.assertEqual(apply.call_args.args[2]["backup_retention_days"], 1)
+
+    BACKEND = "ghcr.io/evalve-app/evalve-backend@sha256:" + "a" * 64
+    NEW_BACKEND = "ghcr.io/evalve-app/evalve-backend@sha256:" + "b" * 64
+    REPLACES = "replaces the EC2 server"
+    IN_PLACE = "restarts only the backend container"
+
+    def invoke_existing(self, args, saved_backend):
+        deployment = {
+            "server_instance_type": "t3.small",
+            "database_instance_class": "db.t4g.micro",
+            "application_secret_arn": SECRET,
+            "domain": None,
+        }
+        if saved_backend is not None:
+            deployment["backend_image"] = saved_backend
+        with patch.object(cli.power, "instance_state", return_value="running"):
+            return self.invoke(
+                [*args, "--monthly-estimate", "35"],
+                ["yes"],
+                existing={"instance_id": "i-0123", "deployment": deployment},
+            )
+
+    def test_up_checks_the_backend_after_kitaru_only_when_there_is_one(self):
+        code, _, _, ready, _, output, _ = self.invoke_existing([], self.BACKEND)
+        self.assertEqual(code, 0)
+        ready.assert_called_once_with("https://evalve.example.com")
+        self.deploy.assert_called_once()
+        self.assertEqual(self.deploy.call_args.args[1:], ("i-0123", self.BACKEND))
+        self.backend_check.assert_called_once_with(
+            "https://evalve.example.com", self.BACKEND
+        )
+        self.assertIn("Evalve backend: https://evalve.example.com/evalve/health", output)
+
+        code, _, _, _, _, output, _ = self.invoke_existing([], None)
+        self.assertEqual(code, 0)
+        self.deploy.assert_not_called()
+        self.backend_check.assert_not_called()
+        self.assertNotIn("/evalve/health", output)
+
+    def test_plain_up_keeps_the_saved_backend_without_a_warning(self):
+        code, _, apply, _, _, output, _ = self.invoke_existing([], self.BACKEND)
+        self.assertEqual(code, 0)
+        self.assertEqual(apply.call_args.args[2]["backend_image"], self.BACKEND)
+        self.assertIn(f"Evalve backend: {self.BACKEND}\n", output)
+        self.assertNotIn(self.REPLACES, output)
+
+    def test_turning_the_backend_on_or_off_warns_about_replacement(self):
+        for flag, saved in ((self.BACKEND, None), ("", self.BACKEND)):
+            with self.subTest(flag=flag):
+                code, _, apply, _, _, output, _ = self.invoke_existing(
+                    ["--backend-image", flag], saved
+                )
+                self.assertEqual(code, 0)
+                self.assertEqual(apply.call_args.args[2]["backend_image"], flag)
+                self.assertIn(self.REPLACES, output)
+                self.assertIn("deploy-dashboard.sh", output)
+                self.assertNotIn(self.IN_PLACE, output)
+
+    def test_a_new_backend_image_restarts_only_the_backend(self):
+        code, _, apply, _, _, output, _ = self.invoke_existing(
+            ["--backend-image", self.NEW_BACKEND], self.BACKEND
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(apply.call_args.args[2]["backend_image"], self.NEW_BACKEND)
+        self.assertIn(self.IN_PLACE, output)
+        self.assertNotIn(self.REPLACES, output)
+        self.assertEqual(self.deploy.call_args.args[1:], ("i-0123", self.NEW_BACKEND))
+
+    def test_same_backend_or_none_saved_gives_no_warning(self):
+        for args, saved, shown in (
+            (["--backend-image", self.BACKEND], self.BACKEND, self.BACKEND),
+            ([], None, "none"),
+        ):
+            with self.subTest(saved=saved):
+                code, _, apply, _, _, output, _ = self.invoke_existing(args, saved)
+                self.assertEqual(code, 0)
+                self.assertIn(f"Evalve backend: {shown}\n", output)
+                self.assertNotIn(self.REPLACES, output)
+                self.assertNotIn(self.IN_PLACE, output)
+
+    def test_first_up_with_a_backend_has_no_server_to_replace(self):
+        code, _, apply, _, _, output, _ = self.invoke(
+            [
+                "--server-type",
+                "t3.small",
+                "--database-class",
+                "db.t4g.micro",
+                "--backend-image",
+                self.BACKEND,
+                "--monthly-estimate",
+                "35",
+            ],
+            ["yes"],
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(apply.call_args.args[2]["backend_image"], self.BACKEND)
+        self.assertNotIn(self.REPLACES, output)
+        # A new server gets its image from up, not from user_data.
+        self.assertEqual(self.deploy.call_args.args[1:], ("i-0123", self.BACKEND))
+
+    def test_backend_image_tag_is_refused_before_aws(self):
+        with (
+            patch.object(cli, "Aws") as factory,
+            redirect_stderr(io.StringIO()) as errors,
+            self.assertRaises(SystemExit),
+        ):
+            cli.main(["up", "--backend-image", "ghcr.io/evalve-app/evalve-backend:v0.1.0"])
+        self.assertIn("backend image digest", errors.getvalue())
+        factory.assert_not_called()
 
     def test_custom_domain_requires_an_existing_ip(self):
         code, aws, apply, _, dns, _, errors = self.invoke(

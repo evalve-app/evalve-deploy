@@ -69,11 +69,12 @@ resource "aws_instance" "server" {
       database_host              = aws_db_instance.main.address
       hostname                   = local.hostname
     }))
-    refresh_script = filebase64("${path.module}/refresh.py")
-    hostname       = local.hostname
-    public_ip      = aws_eip.server.public_ip
-    kitaru_image   = var.server_image
-    caddy_image    = local.caddy_image
+    refresh_script  = filebase64("${path.module}/refresh.py")
+    hostname        = local.hostname
+    public_ip       = aws_eip.server.public_ip
+    kitaru_image    = var.server_image
+    backend_enabled = var.backend_image != ""
+    caddy_image     = local.caddy_image
   })
 
   metadata_options {

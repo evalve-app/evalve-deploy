@@ -56,6 +56,18 @@ To switch to a custom domain, point its A record at the deployment's Elastic IP,
 
 The `evalve-ui` repo deploys the Evalve dashboard to `https://dashboard.<hostname>` on this server. Run its `scripts/deploy-dashboard.sh` after each `up` that makes a new server or replaces EC2, including `up --restore`. If you use `--domain`, point `dashboard.<domain>` at the server too. ADR 0003 lists the server files that the deploy depends on.
 
+## Evalve backend
+
+The Evalve backend holds Loop state (ADR 0004). To run it, pass its image by digest:
+
+```sh
+evalve up --backend-image ghcr.io/evalve-app/evalve-backend@sha256:<digest>
+```
+
+Pushing a `v*` tag in `evalve-backend` publishes the image, and the workflow summary shows the digest. `up` saves the image in S3 state, so later `up` runs keep it. Pass `--backend-image ""` to remove the backend.
+
+Caddy sends `https://<hostname>/evalve/*` to the backend. `up` and `start` wait until `/evalve/health` reports a working database and the pinned image. A new image restarts only the backend container. Turning the backend on or off replaces EC2, so run `deploy-dashboard.sh` in `evalve-ui` again afterwards.
+
 ## Stop, start, and recover
 
 ```sh
@@ -63,7 +75,7 @@ evalve stop
 evalve start
 ```
 
-`stop` drains Kitaru through Systems Manager and stops EC2. RDS stays running and the Elastic IP stays associated. `start` brings the same instance back and checks the existing HTTPS endpoint.
+`stop` drains the Evalve backend and Kitaru through Systems Manager and stops EC2. RDS stays running and the Elastic IP stays associated. `start` brings the same instance back and checks the existing HTTPS endpoint and, if the deployment has one, the Evalve backend.
 
 ```sh
 evalve down
