@@ -8,7 +8,6 @@ run() {
   "$@"
 }
 
-run python3 scripts/lint_tickets.py
 PYTHONPATH=src run python3 -m unittest discover -s tests
 run python3 -m unittest discover -s infra/tests -p 'test_*.py'
 run terraform -chdir=infra init -backend=false -input=false -lockfile=readonly

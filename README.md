@@ -80,7 +80,7 @@ If teardown is interrupted, rerun `down` to use the same snapshot. If restoratio
 scripts/check.sh
 ```
 
-The script runs the ticket status lint, the Python unit tests, and the Terraform format, validate and test commands. It stops at the first failure. The `Local checks` GitHub Actions workflow runs the same script on every push and pull request. To run it before each commit, enable the hook one time per clone:
+The script runs the Python unit tests and the Terraform format, validate and test commands. It stops at the first failure. The `Local checks` GitHub Actions workflow runs the same script on every push and pull request. To run it before each commit, enable the hook one time per clone:
 
 ```sh
 git config core.hooksPath .githooks
