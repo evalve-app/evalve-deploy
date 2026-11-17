@@ -54,6 +54,12 @@ class CredentialsTest(unittest.TestCase):
                     output.getvalue(), "Username: default\nPassword: test-password\n"
                 )
 
+    def test_help_names_the_admin_account_and_no_kitaru_dashboard(self):
+        with redirect_stdout(io.StringIO()) as output, self.assertRaises(SystemExit):
+            cli.main(["--help"])
+        self.assertIn("Print the bootstrap Admin account login", output.getvalue())
+        self.assertNotIn("Kitaru dashboard", output.getvalue())
+
     def test_missing_deployment_refuses_to_fetch_any_secret(self):
         aws = Mock()
         aws.state_outputs.return_value = {}
@@ -146,7 +152,11 @@ class UpTest(unittest.TestCase):
         self.assertEqual(apply.call_args.args[2]["backup_retention_days"], 7)
         self.assertIsNone(apply.call_args.args[2]["domain"])
         ready.assert_called_once_with("https://evalve.example.com")
-        self.assertIn("Kitaru dashboard:", output)
+        self.assertIn("Bundled dashboard: https://evalve.example.com\n", output)
+        self.assertIn(
+            "evalve credentials with the same AWS profile and region for the bootstrap Admin account login.",
+            output,
+        )
 
     def test_first_up_can_use_one_day_of_automated_backups(self):
         code, _, apply, _, _, output, _ = self.invoke(

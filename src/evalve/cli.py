@@ -65,7 +65,7 @@ def parser() -> argparse.ArgumentParser:
             "down", help="Save a verified database snapshot and remove the deployment."
         ),
         commands.add_parser(
-            "credentials", help="Print the bootstrap Kitaru dashboard login."
+            "credentials", help="Print the bootstrap Admin account login."
         ),
     ):
         command.add_argument(
@@ -247,9 +247,9 @@ def up(args: argparse.Namespace) -> None:
         wait_for_kitaru(url)
         if restore_etag:
             aws.delete_document(lifecycle.OPERATION_KEY, restore_etag)
-        print(f"Kitaru dashboard: {url}")
+        print(f"Bundled dashboard: {url}")
         print(
-            "Run evalve credentials with the same AWS profile and region for the bootstrap dashboard login."
+            "Run evalve credentials with the same AWS profile and region for the bootstrap Admin account login."
         )
 
 
