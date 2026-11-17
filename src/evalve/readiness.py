@@ -64,13 +64,19 @@ def wait_for_backend(url: str, image: str, timeout: int = 600) -> None:
         except (URLError, OSError, ValueError):
             pass
         if isinstance(health, dict):
+            running_image = health.get("image")
             # Waiting does not fix a wrong build, so stop at once.
-            if health.get("image") not in (None, image):
+            if running_image is not None and running_image != image:
                 raise EvalveError(
-                    f"The Evalve backend runs {health['image']}, not {image}. "
+                    f"The Evalve backend runs {running_image}, not {image}. "
                     "Check the image and retry."
                 )
             if health.get("database") == "ok":
+                if running_image is None:
+                    raise EvalveError(
+                        "The Evalve backend did not report its image. "
+                        "Check EVALVE_IMAGE in the backend configuration on EC2 and retry."
+                    )
                 try:
                     with opener.open(f"{url}/evalve/v1/me", timeout=8):
                         raise EvalveError(

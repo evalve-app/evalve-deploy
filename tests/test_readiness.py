@@ -36,6 +36,9 @@ class ReadinessTest(unittest.TestCase):
     def test_backend_waits_through_503_then_needs_the_image_and_a_401(self):
         opener = Mock()
         opener.open.side_effect = [
+            HTTPError(
+                self.URL, 503, "Unavailable", {}, io.BytesIO(b'{"database":"unavailable"}')
+            ),
             self.backend_answer(503, database="unavailable"),
             self.backend_answer(200),
             HTTPError(self.URL, 401, "Unauthorized", {}, None),
@@ -50,10 +53,26 @@ class ReadinessTest(unittest.TestCase):
             [
                 f"{self.URL}/evalve/health",
                 f"{self.URL}/evalve/health",
+                f"{self.URL}/evalve/health",
                 f"{self.URL}/evalve/v1/me",
             ],
         )
-        sleep.assert_called_once()
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_healthy_backend_must_report_its_image(self):
+        for body in (b'{"database":"ok"}', b'{"database":"ok","image":null}'):
+            with self.subTest(body=body):
+                opener = Mock()
+                with (
+                    HTTPError(self.URL, 401, "Unauthorized", {}, None) as unauthorized,
+                    patch.object(readiness, "build_opener", return_value=opener),
+                    patch.object(readiness.time, "sleep") as sleep,
+                ):
+                    opener.open.side_effect = [io.BytesIO(body), unauthorized]
+                    with self.assertRaisesRegex(EvalveError, "Check EVALVE_IMAGE"):
+                        readiness.wait_for_backend(self.URL, self.BACKEND)
+                opener.open.assert_called_once_with(f"{self.URL}/evalve/health", timeout=8)
+                sleep.assert_not_called()
 
     def test_backend_with_another_image_fails_without_waiting(self):
         other = "ghcr.io/evalve-app/evalve-backend@sha256:" + "b" * 64
