@@ -2,6 +2,8 @@
 
 Decided 2026-11-11.
 
+Status: reopened on 2026-11-16 by the epic [01 Agent-driven Loops on AWS](https://app.shortcut.com/team-4-1/epic/26). That epic puts a Loop API and a Loop store in `evalve-backend`. The ADR that replaces this one is story [sc-232](https://app.shortcut.com/team-4-1/story/232). Do not use this ADR as the current decision.
+
 In the MVP, a Loop is a series of automated Kitaru experiments on one agent and one cohort. Each Round registers a new Kitaru agent version that changes only the system prompt, then runs one experiment for that version. A Loop has no Gates, and the Evalve dashboard reads Loops and Rounds from Kitaru experiments through `/api/v1`. So Evalve deploys no Loop state API: no container, no `/loops-api/` route in the Caddyfile, and no Loop schema in RDS. We chose this because Kitaru already stores everything that a Loop without Gates needs, and a separate store would add a container, a route, and a database schema for state that Kitaru keeps.
 
 This replaces, for the MVP, the part of `evalve-ui` ADR 0002 that puts a Loop state API module in this repo.
