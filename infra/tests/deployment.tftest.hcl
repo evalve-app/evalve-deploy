@@ -133,6 +133,102 @@ run "free_plan_uses_one_day_of_automated_backups" {
   }
 }
 
+run "no_backend_image_records_an_empty_image" {
+  command = apply
+
+  assert {
+    condition     = output.deployment.backend_image == ""
+    error_message = "A deployment without backend_image must record an empty image."
+  }
+
+  assert {
+    condition     = !strcontains(aws_instance.server.user_data, "evalve-backend")
+    error_message = "Without backend_image, the server must have no backend unit."
+  }
+
+  assert {
+    condition = (
+      strcontains(aws_instance.server.user_data, "203-0-113-10.sslip.io {\n  reverse_proxy 127.0.0.1:8000\n}") &&
+      !strcontains(aws_instance.server.user_data, "/evalve/*") &&
+      !strcontains(aws_instance.server.user_data, "127.0.0.1:8100")
+    )
+    error_message = "Without backend_image, Caddy must send every path to Kitaru as before."
+  }
+
+  assert {
+    condition = (
+      strcontains(aws_instance.server.user_data, "import /etc/caddy/sites/*.caddy") &&
+      strcontains(aws_instance.server.user_data, "install -d -m 755 /etc/evalve/sites") &&
+      strcontains(aws_instance.server.user_data, "--mount type=bind,src=/etc/evalve/sites,dst=/etc/caddy/sites,readonly")
+    )
+    error_message = "Caddy must always import the sites folder that evalve-ui writes its dashboard into."
+  }
+
+  assert {
+    # evalve-ui's remote-install.sh uses this exact line as an anchor (ADR 0003).
+    condition     = strcontains(aws_instance.server.user_data, "  --mount type=bind,src=/etc/evalve/Caddyfile,dst=/etc/caddy/Caddyfile,readonly \\\n")
+    error_message = "The Caddyfile mount line is part of the contract with evalve-ui and must not change."
+  }
+}
+
+run "backend_image_is_recorded_for_restore" {
+  command = apply
+
+  variables {
+    backend_image = "ghcr.io/evalve-app/evalve-backend@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+
+  assert {
+    condition     = output.deployment.backend_image == var.backend_image
+    error_message = "The backend image must be recorded in deployment state so down and restore keep it."
+  }
+
+  assert {
+    condition = (
+      strcontains(aws_instance.server.user_data, "cat > /etc/systemd/system/evalve-backend.service") &&
+      strcontains(aws_instance.server.user_data, "--name evalve-backend --network host") &&
+      strcontains(aws_instance.server.user_data, "evalve-caddy.service evalve-backend.service")
+    )
+    error_message = "With backend_image, the server must run and enable the backend on the host network."
+  }
+
+  assert {
+    # A new image must not change user_data, or Terraform replaces EC2.
+    condition = (
+      !strcontains(aws_instance.server.user_data, var.backend_image) &&
+      strcontains(aws_instance.server.user_data, "ConditionPathExists=/etc/evalve/backend-image.env") &&
+      strcontains(aws_instance.server.user_data, "EnvironmentFile=/etc/evalve/backend-image.env") &&
+      strcontains(aws_instance.server.user_data, "--env EVALVE_IMAGE=$${EVALVE_BACKEND_IMAGE} \\") &&
+      strcontains(aws_instance.server.user_data, "  $${EVALVE_BACKEND_IMAGE}\n")
+    )
+    error_message = "The backend unit must read its image from the file that up writes, not from user_data."
+  }
+
+  assert {
+    condition = strcontains(aws_instance.server.user_data, join("\n", [
+      "203-0-113-10.sslip.io {",
+      "  handle /evalve/* {",
+      "    reverse_proxy 127.0.0.1:8100",
+      "  }",
+      "  handle {",
+      "    reverse_proxy 127.0.0.1:8000",
+      "  }",
+      "}",
+    ]))
+    error_message = "With backend_image, Caddy must send /evalve/* to the backend and everything else to Kitaru."
+  }
+}
+
+run "reject_backend_image_tag" {
+  command = plan
+
+  variables {
+    backend_image = "ghcr.io/evalve-app/evalve-backend:v0.1.0"
+  }
+
+  expect_failures = [var.backend_image]
+}
+
 run "reject_foreign_secret" {
   command = plan
 

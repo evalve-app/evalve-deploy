@@ -76,6 +76,18 @@ variable "server_image" {
   }
 }
 
+variable "backend_image" {
+  type        = string
+  default     = ""
+  nullable    = false
+  description = "Evalve backend image pinned by digest. Empty means no backend."
+
+  validation {
+    condition     = var.backend_image == "" || can(regex("^ghcr\\.io/evalve-app/evalve-backend@sha256:[a-f0-9]{64}$", var.backend_image))
+    error_message = "Use an immutable Evalve backend image digest such as ghcr.io/evalve-app/evalve-backend@sha256:<64 hex characters>, or leave backend_image empty."
+  }
+}
+
 variable "application_secret_version" {
   type    = string
   default = null

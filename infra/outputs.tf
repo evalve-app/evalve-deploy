@@ -14,6 +14,7 @@ output "deployment" {
     application_secret_version = var.application_secret_version
     database_engine_version    = var.database_engine_version
     server_image               = var.server_image
+    backend_image              = var.backend_image
     snapshot_id                = var.snapshot_id
   }
 }
