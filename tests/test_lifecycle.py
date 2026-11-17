@@ -51,6 +51,88 @@ class PowerTest(unittest.TestCase):
         )
         command.assert_called_once_with(aws, INSTANCE, power.START)
 
+    def test_start_checks_the_backend_after_kitaru_only_when_there_is_one(self):
+        image = "ghcr.io/evalve-app/evalve-backend@sha256:" + "0" * 64
+        url = "https://example.sslip.io"
+        for backend in (image, None):
+            with self.subTest(backend=backend):
+                deployment = dict(CONFIG, backend_image=backend) if backend else CONFIG
+                aws = Mock(account=ACCOUNT, region=REGION)
+                aws.caller_account.return_value = ACCOUNT
+                aws.state_outputs.return_value = {
+                    "instance_id": INSTANCE,
+                    "url": url,
+                    "deployment": deployment,
+                }
+                calls = []
+                with (
+                    patch.object(
+                        lifecycle, "pending_operation", return_value=(None, None)
+                    ),
+                    patch("builtins.input", return_value="y"),
+                    redirect_stdout(io.StringIO()),
+                    patch.object(power, "start"),
+                    patch.object(
+                        lifecycle,
+                        "wait_for_kitaru",
+                        side_effect=lambda *a: calls.append(("kitaru", a)),
+                    ),
+                    patch.object(
+                        lifecycle,
+                        "wait_for_backend",
+                        side_effect=lambda *a: calls.append(("backend", a)),
+                    ),
+                ):
+                    lifecycle.power_change(aws, "start")
+                expected = [("kitaru", (url,))]
+                if backend:
+                    expected.append(("backend", (url, image)))
+                self.assertEqual(calls, expected)
+
+    def test_backend_deploy_writes_the_image_and_restarts_only_on_a_change(self):
+        image = "ghcr.io/evalve-app/evalve-backend@sha256:" + "0" * 64
+        commands = power.backend_deploy_commands(image)
+        self.assertEqual(commands[0], "cloud-init status --wait")
+        self.assertEqual(
+            commands[1],
+            "if [ \"$(cat /etc/evalve/backend-image.env 2>/dev/null)\""
+            f" != 'EVALVE_BACKEND_IMAGE={image}' ]; then"
+            f" printf '%s\\n' 'EVALVE_BACKEND_IMAGE={image}'"
+            " > /etc/evalve/backend-image.env.new"
+            " && mv /etc/evalve/backend-image.env.new /etc/evalve/backend-image.env"
+            " && systemctl restart evalve-backend.service;"
+            " else systemctl start evalve-backend.service; fi",
+        )
+        aws = Mock()
+        with patch.object(power, "run_server_command") as run:
+            power.deploy_backend(aws, INSTANCE, image)
+        run.assert_called_once_with(aws, INSTANCE, commands)
+
+    def test_drain_stops_an_existing_backend_before_kitaru(self):
+        backend = power.DRAIN.index(
+            "if systemctl cat evalve-backend.service >/dev/null 2>&1; then"
+            " systemctl stop evalve-backend.service; fi"
+        )
+        self.assertLess(
+            power.DRAIN.index("systemctl stop evalve-refresh.timer evalve-refresh.service"),
+            backend,
+        )
+        self.assertEqual(
+            power.DRAIN[backend + 1 : backend + 3],
+            [
+                "running=$(docker ps --filter name=^/evalve-backend$ --format '{{.ID}}')",
+                'test -z "$running"',
+            ],
+        )
+        self.assertLess(backend, power.DRAIN.index("systemctl stop evalve-kitaru.service"))
+
+    def test_start_starts_the_backend_only_when_its_unit_exists(self):
+        self.assertEqual(
+            power.START[-1],
+            "if systemctl cat evalve-backend.service >/dev/null 2>&1; then"
+            " systemctl start evalve-backend.service; fi",
+        )
+
     def test_stop_never_sends_ec2_stop_after_failed_drain(self):
         aws = Mock()
         with (
@@ -265,13 +347,28 @@ class ShutdownTest(unittest.TestCase):
         self.assertEqual(self.events.count("verify"), 2)
         self.assertEqual(self.events.count("drain"), 1)
 
+    def test_backend_image_is_saved_for_restore(self):
+        image = "ghcr.io/evalve-app/evalve-backend@sha256:" + "0" * 64
+        deployment = self.documents[STATE_KEY]["outputs"]["deployment"]
+        deployment["value"] = dict(CONFIG, backend_image=image)
+        self.invoke()
+        manifests = [
+            document
+            for key, document in self.documents.items()
+            if key.startswith("evalve/snapshots/")
+        ]
+        self.assertEqual(len(manifests), 1)
+        self.assertEqual(manifests[0]["configuration"]["backend_image"], image)
+
 
 class RestoreTest(unittest.TestCase):
     def test_restore_cli_passes_saved_configuration_and_retains_checkpoint_until_ready(
         self,
     ):
-        for healthy in (False, True):
-            with self.subTest(healthy=healthy):
+        # A failed Kitaru or backend check must keep the checkpoint for a retry.
+        for failing in ("kitaru", "backend", None):
+            healthy = failing is None
+            with self.subTest(failing=failing):
                 aws = Mock(account=ACCOUNT, region=REGION, profile="evalve")
                 aws.state_outputs.return_value = {}
                 aws.caller_account.return_value = ACCOUNT
@@ -281,6 +378,7 @@ class RestoreTest(unittest.TestCase):
                     snapshot_id=SNAPSHOT,
                     domain=None,
                     database_engine_version="16.12",
+                    backend_image="ghcr.io/evalve-app/evalve-backend@sha256:" + "0" * 64,
                 )
                 with (
                     patch.object(cli, "check_tools"),
@@ -303,12 +401,21 @@ class RestoreTest(unittest.TestCase):
                     patch.object(
                         terraform,
                         "apply",
-                        return_value={"url": "https://example.sslip.io"},
+                        return_value={
+                            "url": "https://example.sslip.io",
+                            "instance_id": INSTANCE,
+                        },
                     ) as apply,
                     patch.object(
                         cli,
                         "wait_for_kitaru",
-                        side_effect=None if healthy else EvalveError("not ready"),
+                        side_effect=EvalveError("not ready") if failing == "kitaru" else None,
+                    ),
+                    patch.object(power, "deploy_backend") as deploy,
+                    patch.object(
+                        cli,
+                        "wait_for_backend",
+                        side_effect=EvalveError("not ready") if failing == "backend" else None,
                     ),
                 ):
                     code = cli.main(
@@ -319,6 +426,10 @@ class RestoreTest(unittest.TestCase):
                 self.assertEqual(variables["application_secret_version"], VERSION)
                 self.assertEqual(variables["backup_retention_days"], 1)
                 self.assertIsNone(variables["domain"])
+                self.assertEqual(variables["backend_image"], result["backend_image"])
+                if failing != "kitaru":
+                    # The restored server gets the saved image from up.
+                    deploy.assert_called_once_with(aws, INSTANCE, result["backend_image"])
                 self.assertEqual(code, 0 if healthy else 1)
                 if healthy:
                     aws.delete_document.assert_called_once_with(

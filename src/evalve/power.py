@@ -6,15 +6,49 @@ import time
 from evalve import EvalveError
 from evalve.aws import Aws, AwsError
 
+# The backend unit exists only when the deployment has a backend_image. It
+# stops before Kitaru, so it is not in the middle of a call to Kitaru, and it
+# has finished its writes before down takes the database snapshot.
+BACKEND_UNIT = "evalve-backend.service"
+IF_BACKEND = f"if systemctl cat {BACKEND_UNIT} >/dev/null 2>&1; then"
 DRAIN = [
     "systemctl stop evalve-refresh.timer evalve-refresh.service",
+    f"{IF_BACKEND} systemctl stop {BACKEND_UNIT}; fi",
+    "running=$(docker ps --filter name=^/evalve-backend$ --format '{{.ID}}')",
+    'test -z "$running"',
     "systemctl stop evalve-kitaru.service",
     "running=$(docker ps --filter name=^/evalve-kitaru$ --format '{{.ID}}')",
     'test -z "$running"',
 ]
+BACKEND_IMAGE_FILE = "/etc/evalve/backend-image.env"
+
+
+def backend_deploy_commands(image: str) -> list[str]:
+    """Write the backend image on EC2 and restart only the backend when it changed.
+
+    The image is not in user_data, so a new image does not replace EC2. The CLI
+    has already checked that the image is a digest, so it is safe in the shell.
+    """
+    line = f"EVALVE_BACKEND_IMAGE={image}"
+    return [
+        # On a new server, wait until the bootstrap has written the unit.
+        "cloud-init status --wait",
+        f"if [ \"$(cat {BACKEND_IMAGE_FILE} 2>/dev/null)\" != '{line}' ]; then"
+        f" printf '%s\\n' '{line}' > {BACKEND_IMAGE_FILE}.new"
+        f" && mv {BACKEND_IMAGE_FILE}.new {BACKEND_IMAGE_FILE}"
+        f" && systemctl restart {BACKEND_UNIT};"
+        f" else systemctl start {BACKEND_UNIT}; fi",
+    ]
+
+
+def deploy_backend(aws: Aws, instance_id: str, image: str) -> None:
+    run_server_command(aws, instance_id, backend_deploy_commands(image))
+
+
 START = [
     "cloud-init status --wait",
     "systemctl start evalve-kitaru.service evalve-refresh.timer evalve-caddy.service",
+    f"{IF_BACKEND} systemctl start {BACKEND_UNIT}; fi",
 ]
 
 

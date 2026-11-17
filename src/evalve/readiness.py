@@ -40,3 +40,50 @@ def wait_for_kitaru(url: str, timeout: int = 600) -> None:
     raise EvalveError(
         f"Kitaru did not become ready at {url}. Check DNS and the EC2 bootstrap logs, then retry up."
     )
+
+
+def wait_for_backend(url: str, image: str, timeout: int = 600) -> None:
+    """Wait until the Evalve backend answers through Caddy with the pinned image."""
+    if not url.startswith("https://"):
+        raise EvalveError("Backend readiness requires an HTTPS URL.")
+    opener = build_opener(NoRedirect())
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        health = None
+        try:
+            with opener.open(f"{url}/evalve/health", timeout=8) as response:
+                health = json.loads(response.read(65_536))
+        except HTTPError as exc:
+            # 503 means the backend runs but cannot reach its database yet.
+            if exc.code == 503:
+                try:
+                    health = json.loads(exc.read(65_536))
+                except (OSError, ValueError):
+                    pass
+            exc.close()
+        except (URLError, OSError, ValueError):
+            pass
+        if isinstance(health, dict):
+            # Waiting does not fix a wrong build, so stop at once.
+            if health.get("image") not in (None, image):
+                raise EvalveError(
+                    f"The Evalve backend runs {health['image']}, not {image}. "
+                    "Check the image and retry."
+                )
+            if health.get("database") == "ok":
+                try:
+                    with opener.open(f"{url}/evalve/v1/me", timeout=8):
+                        raise EvalveError(
+                            "The Evalve backend accepted a request without credentials."
+                        )
+                except HTTPError as exc:
+                    exc.close()
+                    if exc.code == 401:
+                        return
+                except (URLError, OSError):
+                    pass
+        time.sleep(5)
+    raise EvalveError(
+        f"The Evalve backend did not become ready at {url}/evalve/health. "
+        "Check the evalve-backend unit on EC2, then retry."
+    )

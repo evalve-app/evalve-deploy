@@ -13,7 +13,7 @@ from decimal import Decimal
 
 from evalve import EvalveError, lifecycle, power, terraform
 from evalve.aws import Aws, read_application_secret
-from evalve.readiness import wait_for_kitaru
+from evalve.readiness import wait_for_backend, wait_for_kitaru
 
 
 def monthly_estimate(value: str) -> Decimal:
@@ -31,6 +31,18 @@ def hostname(value: str) -> str:
     ):
         raise argparse.ArgumentTypeError(
             "Use a lowercase DNS hostname such as kitaru.example.com."
+        )
+    return value
+
+
+def backend_image(value: str) -> str:
+    if value and not re.fullmatch(
+        r"ghcr\.io/evalve-app/evalve-backend@sha256:[a-f0-9]{64}", value
+    ):
+        raise argparse.ArgumentTypeError(
+            "Use an Evalve backend image digest such as "
+            "ghcr.io/evalve-app/evalve-backend@sha256:<64 hex characters>, "
+            "or an empty value to remove the backend."
         )
     return value
 
@@ -96,6 +108,12 @@ def parser() -> argparse.ArgumentParser:
         "--restore",
         metavar="SNAPSHOT_ID",
         help="Restore the selected Evalve snapshot into an empty deployment.",
+    )
+    up.add_argument(
+        "--backend-image",
+        type=backend_image,
+        help="Evalve backend image pinned by digest. A later up keeps the saved image; "
+        'pass "" to remove the backend.',
     )
     up.add_argument(
         "--monthly-estimate",
@@ -197,6 +215,19 @@ def up(args: argparse.Namespace) -> None:
         print(
             f"Endpoint: {domain or 'sslip.io'} on one Elastic IP | State bucket: {aws.bucket}"
         )
+        # Without the flag, keep the saved image, so a plain up never removes the backend.
+        saved_backend = existing.get("backend_image", "")
+        backend = saved_backend if args.backend_image is None else args.backend_image
+        print(f"Evalve backend: {backend or 'none'}")
+        if outputs.get("instance_id") and not args.restore:
+            if bool(backend) != bool(saved_backend):
+                print(
+                    "Turning the backend on or off replaces the EC2 server. "
+                    "The URL and the RDS data stay. Afterwards, run deploy-dashboard.sh "
+                    "in evalve-ui again."
+                )
+            elif backend != saved_backend:
+                print("The new backend image restarts only the backend container.")
         estimate = args.monthly_estimate
         if estimate is None:
             print(
@@ -240,14 +271,23 @@ def up(args: argparse.Namespace) -> None:
                     for key in lifecycle.TF_SETTINGS
                     if key in existing
                 },
+                "backend_image": backend,
             },
         )
         url = outputs["url"]
         print("Waiting for HTTPS, database health, and API authentication…", flush=True)
         wait_for_kitaru(url)
+        if backend:
+            # Before the restore checkpoint goes, so a failed deploy can be retried.
+            print("Deploying the Evalve backend…", flush=True)
+            power.deploy_backend(aws, outputs["instance_id"], backend)
+            print("Waiting for the Evalve backend…", flush=True)
+            wait_for_backend(url, backend)
         if restore_etag:
             aws.delete_document(lifecycle.OPERATION_KEY, restore_etag)
         print(f"Bundled dashboard: {url}")
+        if backend:
+            print(f"Evalve backend: {url}/evalve/health")
         print(
             "Run evalve credentials with the same AWS profile and region for the bootstrap Admin account login."
         )
