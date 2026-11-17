@@ -39,6 +39,10 @@ _Avoid_: attempt
 The Kitaru account that started a Loop.
 _Avoid_: owner (alone), creator
 
+**Skill Loop**:
+A Loop that a loop skill ran on a Teammate's machine against Kitaru, with no state on the Evalve backend. The Evalve dashboard shows it read-only.
+_Avoid_: legacy Loop, old Loop, local Loop
+
 **Evalve backend**:
 The Evalve service that owns the Loop rules and keeps the state of each Loop.
 _Avoid_: Loop API, Loop state API, server
