@@ -35,6 +35,10 @@ _Avoid_: baseline, Round 0
 One replay of each session in the cohort version, with a score from each selected evaluator.
 _Avoid_: attempt
 
+**Loop owner**:
+The Kitaru account that started a Loop.
+_Avoid_: owner (alone), creator
+
 **Evalve backend**:
 The Evalve service that owns the Loop rules and keeps the state of each Loop.
 _Avoid_: Loop API, Loop state API, server
