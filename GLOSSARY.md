@@ -18,6 +18,23 @@ _Avoid_: user, member
 A Kitaru account with the admin flag, such as the `default` bootstrap account. In the pilot, only the Operator uses one.
 _Avoid_: superuser
 
+### Loops
+
+**Loop**:
+An ordered collection of Experiments on one agent and one cohort version, which starts with the Control Experiment and stops when an Experiment passes or a limit is reached.
+
+**Experiment**:
+One change to the agent, tested by one or more Runs. Kitaru uses the same term for the record that it stores.
+_Avoid_: Round, lap, candidate
+
+**Control Experiment**:
+Experiment 0 of a Loop, which tests the agent with no change.
+_Avoid_: baseline, Round 0
+
+**Run**:
+One replay of each session in the cohort version, with a score from each selected evaluator.
+_Avoid_: attempt
+
 ### Dashboards
 
 **Bundled dashboard**:
