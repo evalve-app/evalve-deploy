@@ -43,6 +43,14 @@ _Avoid_: owner (alone), creator
 The Evalve service that owns the Loop rules and keeps the state of each Loop.
 _Avoid_: Loop API, Loop state API, server
 
+**Evalve MCP**:
+The local tool server through which a coding agent runs Loops on the Evalve backend.
+_Avoid_: Loop MCP, MCP server (alone), Kitaru MCP
+
+**Coding agent**:
+The AI assistant on a Teammate's machine that calls the Evalve MCP. "Agent" alone is the agent that a Loop tests.
+_Avoid_: agent (alone), client
+
 ### Dashboards
 
 **Bundled dashboard**:
