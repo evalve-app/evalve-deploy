@@ -1,4 +1,5 @@
 output "url" { value = local.url }
+output "dashboard_url" { value = "https://dashboard.${local.hostname}" }
 output "public_ip" { value = aws_eip.server.public_ip }
 output "instance_id" { value = aws_instance.server.id }
 output "database_id" { value = aws_db_instance.main.identifier }
@@ -15,6 +16,7 @@ output "deployment" {
     database_engine_version    = var.database_engine_version
     server_image               = var.server_image
     backend_image              = var.backend_image
+    backend_image_pinned       = var.backend_image_pinned
     snapshot_id                = var.snapshot_id
   }
 }

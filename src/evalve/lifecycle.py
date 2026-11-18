@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from evalve import EvalveError, backup, power, terraform
 from evalve.aws import STATE_KEY, Aws
-from evalve.readiness import wait_for_backend, wait_for_kitaru
+from evalve.readiness import wait_for_backend, wait_for_dashboard, wait_for_kitaru
 
 OPERATION_KEY = "evalve/operation.json"
 TF_SETTINGS = (
@@ -15,6 +15,7 @@ TF_SETTINGS = (
     "application_secret_version",
     "snapshot_id",
     "backend_image",
+    "backend_image_pinned",
 )
 PHASE_TWO_IMAGE = "zenmldocker/kitaru-server@sha256:05ea00482c0adf4609a34d2c95575a6530ce5d60f6cea0e79716336d9e251d47"
 
@@ -143,7 +144,14 @@ def power_change(aws: Aws, action: str) -> None:
         if backend:
             print("Checking the Evalve backend…", flush=True)
             wait_for_backend(outputs["url"], backend)
+        # A server built before up installed the dashboard has no dashboard_url.
+        dashboard_url = outputs.get("dashboard_url")
+        if dashboard_url:
+            print("Checking the Evalve dashboard…", flush=True)
+            wait_for_dashboard(dashboard_url)
         print(f"Bundled dashboard: {outputs['url']}")
+        if dashboard_url:
+            print(f"Evalve dashboard: {dashboard_url}")
     else:
         print("Draining Kitaru before stopping EC2…", flush=True)
         power.stop(aws, outputs["instance_id"])

@@ -88,6 +88,13 @@ variable "backend_image" {
   }
 }
 
+variable "backend_image_pinned" {
+  type        = bool
+  default     = false
+  nullable    = false
+  description = "True when the Operator chose backend_image by hand. Evalve then keeps it instead of the repo default."
+}
+
 variable "application_secret_version" {
   type    = string
   default = null

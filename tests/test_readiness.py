@@ -116,3 +116,48 @@ class ReadinessTest(unittest.TestCase):
         with patch.object(readiness, "build_opener", return_value=opener):
             with self.assertRaisesRegex(EvalveError, "without credentials"):
                 readiness.wait_for_kitaru("https://evalve.example.com")
+
+
+class DashboardReadinessTest(unittest.TestCase):
+    URL = "https://dashboard.evalve.example.com"
+
+    def wait(self, answers, timeout=180):
+        opener = Mock()
+        opener.open.side_effect = answers
+        with (
+            patch.object(readiness, "build_opener", return_value=opener),
+            patch.object(readiness.time, "sleep"),
+        ):
+            readiness.wait_for_dashboard(self.URL, timeout)
+        return opener
+
+    def test_the_evalve_page_passes_in_any_case(self):
+        for title in (b"evalve", b"Evalve", b" EVALVE "):
+            with self.subTest(title=title):
+                opener = self.wait([io.BytesIO(b"<html><title>" + title + b"</title>")])
+                opener.open.assert_called_once_with(f"{self.URL}/", timeout=8)
+
+    def test_it_retries_through_tls_errors_and_404_until_the_page_appears(self):
+        from urllib.error import URLError
+
+        opener = self.wait(
+            [
+                URLError("certificate not ready"),
+                HTTPError(self.URL, 404, "Not Found", {}, None),
+                io.BytesIO(b"<title>evalve</title>"),
+            ]
+        )
+        self.assertEqual(opener.open.call_count, 3)
+
+    def test_the_bundled_kitaru_page_never_passes(self):
+        kitaru = b'<html data-app="kitaru"><title>Kitaru</title>'
+        with (
+            patch.object(readiness.time, "monotonic", side_effect=[0, 1, 2, 999]),
+            self.assertRaises(EvalveError) as raised,
+        ):
+            self.wait([io.BytesIO(kitaru), io.BytesIO(kitaru)])
+        self.assertIn(self.URL, str(raised.exception))
+
+    def test_http_urls_are_refused(self):
+        with self.assertRaises(EvalveError):
+            readiness.wait_for_dashboard("http://dashboard.evalve.example.com")

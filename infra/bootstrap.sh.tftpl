@@ -51,11 +51,39 @@ ${hostname} {
 %{ endif ~}
 }
 
-# Other repos add their own sites here, such as evalve-ui's dashboard.caddy.
+# The Evalve dashboard. evalve up installs its files under
+# /etc/evalve/dashboard and points the current link at one release. The
+# browser calls /api and /evalve on this hostname, so it needs no CORS.
+dashboard.${hostname} {
+  encode gzip
+  handle /api/* {
+    reverse_proxy 127.0.0.1:8000 {
+      header_up Host ${hostname}
+    }
+  }
+%{ if backend_enabled ~}
+  handle /evalve/* {
+    reverse_proxy 127.0.0.1:8100
+  }
+%{ endif ~}
+  handle {
+    # Vite names asset files by their content, so they can be cached forever.
+    # Every other path can be index.html, which must be checked on each visit.
+    @assets path /assets/*
+    header @assets Cache-Control "public, max-age=31536000, immutable"
+    @pages not path /assets/*
+    header @pages Cache-Control "no-cache"
+    root * /srv/dashboard/current
+    try_files {path} /index.html
+    file_server
+  }
+}
+
+# Older servers got the dashboard from evalve-ui's deploy script, which writes here.
 import /etc/caddy/sites/*.caddy
 CADDY
 chmod 644 /etc/evalve/Caddyfile
-install -d -m 755 /etc/evalve/sites
+install -d -m 755 /etc/evalve/sites /etc/evalve/dashboard
 
 cat > /etc/systemd/system/evalve-kitaru.service <<'UNIT'
 [Unit]
@@ -122,6 +150,7 @@ ExecStart=/usr/bin/docker run --name evalve-caddy --network host \
   --mount type=volume,src=evalve-caddy-config,dst=/config \
   --mount type=bind,src=/etc/evalve/Caddyfile,dst=/etc/caddy/Caddyfile,readonly \
   --mount type=bind,src=/etc/evalve/sites,dst=/etc/caddy/sites,readonly \
+  --mount type=bind,src=/etc/evalve/dashboard,dst=/srv/dashboard,readonly \
   --log-driver local --log-opt max-size=10m --log-opt max-file=3 \
   ${caddy_image}
 ExecStop=/usr/bin/docker stop --time 30 evalve-caddy

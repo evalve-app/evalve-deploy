@@ -37,10 +37,10 @@ evalve up --region us-east-1 --server-type t3.small --database-class db.t4g.micr
 
 Use one day of automated RDS backup retention for this Free plan pilot. The pilot account rejected the seven-day team default. Manual snapshots created by `evalve down` are separate from the automated backup retention setting.
 
-At the prompt, approve only after the displayed account, region, backup retention, and estimate match the pilot review. `up` prints the HTTPS address when Kitaru passes its database and authentication checks.
+At the prompt, approve only after the displayed account, region, backup retention, and estimate match the pilot review. `up` prints the HTTPS address when Kitaru passes its database and authentication checks, and the Evalve dashboard address `https://dashboard.<hostname>` when the dashboard answers.
 
 1. Run `evalve credentials --profile evalve --region us-east-1`, then use the displayed bootstrap login at the HTTPS address.
-2. Open **Settings → Members → Create User**, enter a pilot username, select **Invite User**, and copy the invitation link. Share the link directly with the pilot teammate along with the [teammate quickstart](team-quickstart.md).
+2. Open **Settings → Members → Create User**, enter a pilot username, select **Invite User**, and copy the invitation link. Share the link and the Evalve dashboard address directly with the pilot teammate, along with the [teammate quickstart](team-quickstart.md).
 3. Ask the teammate to set a password, sign in, create their own API key, and record one synthetic session. Record the agent name and session ID for the recovery drill. Keep credentials and invitation links out of the test log.
 4. Confirm the signed-in teammate can open the session and see its input, output, and recorded steps. Verify unauthenticated API access returns HTTP 401.
 
@@ -48,10 +48,10 @@ At the prompt, approve only after the displayed account, region, backup retentio
 
 | Check | Pass condition |
 | --- | --- |
-| `evalve stop`, then `evalve start` | The same HTTPS address returns, and the pilot login, key, and trace still work. |
-| Optional custom hostname | Point an A record at the existing Elastic IP, then run `evalve up --region us-east-1 --domain <hostname> --monthly-estimate 36.00`. The custom HTTPS address serves the same trace. This check needs a DNS name you control. |
+| `evalve stop`, then `evalve start` | The same HTTPS address and dashboard address return, and the pilot login, key, and trace still work. |
+| Optional custom hostname | Point the A records of `<hostname>` and `dashboard.<hostname>` at the existing Elastic IP, then run `evalve up --region us-east-1 --domain <hostname> --monthly-estimate 36.00`. The custom HTTPS address serves the same trace, and `https://dashboard.<hostname>` serves the dashboard. This check needs a DNS name you control. |
 | `evalve down` | The CLI prints a verified snapshot ID and restore command. The EC2 instance, RDS instance, and Elastic IP are removed. The snapshot, application secret, and S3 state bucket remain. |
-| `evalve up --restore <snapshot-id>` | A new HTTPS address comes up. The original teammate login and API key still authenticate, and the original session ID and trace payloads match. |
+| `evalve up --restore <snapshot-id>` | A new HTTPS address comes up, with the dashboard at `dashboard.<new hostname>` and no other command. The original teammate login and API key still authenticate, and the original session ID and trace payloads match. |
 | Finish the pilot | Run `evalve down` again when testing is complete. Note the retained snapshots and any ongoing storage or secret charges. |
 
 Pass `--region us-east-1` to lifecycle commands when the profile has no default region. Use the exact restore command printed by `down`, and review the displayed cost again before confirming the restore.

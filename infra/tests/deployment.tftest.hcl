@@ -118,6 +118,15 @@ run "custom_domain" {
     )
     error_message = "A custom hostname should serve the same Elastic IP and replace the default hostname."
   }
+
+  assert {
+    condition = (
+      output.dashboard_url == "https://dashboard.evalve.example.com" &&
+      strcontains(aws_instance.server.user_data, "dashboard.evalve.example.com {") &&
+      strcontains(aws_instance.server.user_data, "header_up Host evalve.example.com")
+    )
+    error_message = "With a custom hostname, the dashboard must live at dashboard.<domain>."
+  }
 }
 
 run "free_plan_uses_one_day_of_automated_backups" {
@@ -169,18 +178,61 @@ run "no_backend_image_records_an_empty_image" {
     condition     = strcontains(aws_instance.server.user_data, "  --mount type=bind,src=/etc/evalve/Caddyfile,dst=/etc/caddy/Caddyfile,readonly \\\n")
     error_message = "The Caddyfile mount line is part of the contract with evalve-ui and must not change."
   }
+
+  assert {
+    condition = (
+      strcontains(aws_instance.server.user_data, "install -d -m 755 /etc/evalve/sites /etc/evalve/dashboard") &&
+      strcontains(aws_instance.server.user_data, "--mount type=bind,src=/etc/evalve/dashboard,dst=/srv/dashboard,readonly")
+    )
+    error_message = "Bootstrap must create the dashboard folder before Caddy starts and mount it into Caddy."
+  }
+
+  assert {
+    condition = strcontains(aws_instance.server.user_data, join("\n", [
+      "dashboard.203-0-113-10.sslip.io {",
+      "  encode gzip",
+      "  handle /api/* {",
+      "    reverse_proxy 127.0.0.1:8000 {",
+      "      header_up Host 203-0-113-10.sslip.io",
+      "    }",
+      "  }",
+      "  handle {",
+    ]))
+    error_message = "The dashboard site must send /api/* to Kitaru with Kitaru's hostname, and no /evalve/* route without a backend."
+  }
+
+  assert {
+    condition = (
+      strcontains(aws_instance.server.user_data, "root * /srv/dashboard/current") &&
+      strcontains(aws_instance.server.user_data, "try_files {path} /index.html") &&
+      strcontains(aws_instance.server.user_data, "header @assets Cache-Control \"public, max-age=31536000, immutable\"") &&
+      strcontains(aws_instance.server.user_data, "header @pages Cache-Control \"no-cache\"")
+    )
+    error_message = "The dashboard site must serve the current release as a single-page app, with cache headers."
+  }
+
+  assert {
+    condition     = output.dashboard_url == "https://dashboard.203-0-113-10.sslip.io"
+    error_message = "The dashboard URL must be dashboard.<hostname>."
+  }
 }
 
 run "backend_image_is_recorded_for_restore" {
   command = apply
 
   variables {
-    backend_image = "ghcr.io/evalve-app/evalve-backend@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    backend_image        = "ghcr.io/evalve-app/evalve-backend@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    backend_image_pinned = true
   }
 
   assert {
     condition     = output.deployment.backend_image == var.backend_image
     error_message = "The backend image must be recorded in deployment state so down and restore keep it."
+  }
+
+  assert {
+    condition     = output.deployment.backend_image_pinned == true
+    error_message = "The pinned marker must be recorded so down and restore keep a hand-picked image."
   }
 
   assert {
@@ -216,6 +268,19 @@ run "backend_image_is_recorded_for_restore" {
       "}",
     ]))
     error_message = "With backend_image, Caddy must send /evalve/* to the backend and everything else to Kitaru."
+  }
+
+  assert {
+    condition = strcontains(aws_instance.server.user_data, join("\n", [
+      "    }",
+      "  }",
+      "  handle /evalve/* {",
+      "    reverse_proxy 127.0.0.1:8100",
+      "  }",
+      "  handle {",
+      "    # Vite names asset files by their content, so they can be cached forever.",
+    ]))
+    error_message = "With backend_image, the dashboard site must also send /evalve/* to the backend."
   }
 }
 

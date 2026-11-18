@@ -2,6 +2,8 @@
 
 Decided 2026-11-16. Story [sc-232](https://app.shortcut.com/team-4-1/story/232). This ADR replaces ADR 0002.
 
+Updated on 2026-11-18 by [sc-378](https://app.shortcut.com/team-4-1/story/378): `evalve up` deploys the backend digest pinned in `DEFAULT_BACKEND_IMAGE` without a flag. A second variable, `backend_image_pinned`, records when an Operator pins another image by hand.
+
 ADR 0002 said that Evalve deploys no Loop state API, because Kitaru stores all that an MVP Loop needs. The epic [01 Agent-driven Loops on AWS](https://app.shortcut.com/team-4-1/epic/26) changes that: a Teammate's coding agent runs a Loop through the Evalve MCP, and one service must own the Loop rules and keep the state between calls. Kitaru cannot hold that state. We decided to run the Evalve backend as a container on the existing EC2 host, with its own database on the PostgreSQL server of Kitaru, and with no credential of its own for Kitaru. We chose this because it adds one container and one database to the deployment, and no host, no secret and no account.
 
 The terms Loop, Experiment, Run and Evalve backend are in `GLOSSARY.md`.
