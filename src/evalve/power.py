@@ -65,6 +65,8 @@ def dashboard_install_script(url: str, sha256: str, root: str = DASHBOARD_DIR) -
     return (
         f"d='{root}'; r=\"$d/{release}\";"
         ' prev=$(readlink "$d/current" 2>/dev/null || true);'
+        # Already served: change nothing, so the previous release stays.
+        f" if [ \"$prev\" = '{release}' ] && [ -f \"$r/index.html\" ]; then exit 0; fi;"
         ' if [ ! -f "$r/index.html" ]; then'
         ' tmp=$(mktemp -d "$d/.tmp-XXXXXX")'
         f" && curl -fsSL --retry 3 -o \"$tmp/dashboard.tgz\" '{url}'"

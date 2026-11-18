@@ -678,3 +678,12 @@ class DashboardInstallTest(unittest.TestCase):
         self.assertEqual(self.install(missing, second).returncode, 0)
         self.assertEqual(self.current(), f"releases/{second}")
         self.assertNotIn(first, self.releases())
+
+    def test_repeating_an_install_after_an_upgrade_keeps_the_previous_release(self):
+        (old_url, old), (new_url, new) = self.bundle("one"), self.bundle("two")
+        self.install(old_url, old)
+        self.install(new_url, new)
+        # A plain up repeats the install of the release that is already served.
+        self.assertEqual(self.install(new_url, new).returncode, 0)
+        self.assertEqual(self.current(), f"releases/{new}")
+        self.assertEqual(self.releases(), sorted([old, new]))
