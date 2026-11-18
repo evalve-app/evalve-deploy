@@ -35,6 +35,18 @@ _Avoid_: baseline, Round 0
 One replay of each session in the cohort version, with a score from each selected evaluator.
 _Avoid_: attempt
 
+**End state**:
+The condition of a Loop that stopped and cannot continue.
+_Avoid_: end (alone), terminal state
+
+**Outcome**:
+The reason for which a Loop reached its end state.
+_Avoid_: result, end reason
+
+**Next action**:
+The step that a Loop needs next while it is not at an end state.
+_Avoid_: state, phase
+
 **Loop owner**:
 The Kitaru account that started a Loop.
 _Avoid_: owner (alone), creator
