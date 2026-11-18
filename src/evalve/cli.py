@@ -18,13 +18,13 @@ from evalve.readiness import wait_for_backend, wait_for_dashboard, wait_for_kita
 # Bump this to the digest of each evalve-backend release. Deployments that
 DEFAULT_BACKEND_IMAGE = (
     "ghcr.io/evalve-app/evalve-backend@sha256:"
-    "d6099c2996260066ada7026b2cb586f31396bc40f89fb59e29332f8bdec64275"
+    "f14f842d1bbd3f3d75188c7cd0a01af94da579d056dba6d9a25fd476c2192766"
 )
 # Bump both to a new evalve-ui release. Its Release workflow summary prints them.
 DEFAULT_DASHBOARD_URL = (
-    "https://github.com/evalve-app/evalve-ui/releases/download/v0.1.0/dashboard.tgz"
+    "https://github.com/evalve-app/evalve-ui/releases/download/v0.1.1/dashboard.tgz"
 )
-DEFAULT_DASHBOARD_SHA256 = "75c84aaf3bbb702d47bbd9ced62863eec1aa1ad5a8df369f31b42645dab47df3"
+DEFAULT_DASHBOARD_SHA256 = "9ddba8e5a85272aa3c495daf8242e79c835785cfd6f317f65c63b26be7a92d75"
 
 
 def monthly_estimate(value: str) -> Decimal:
