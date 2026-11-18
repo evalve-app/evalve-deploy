@@ -53,10 +53,12 @@ resource "aws_iam_instance_profile" "server" {
 }
 
 resource "aws_instance" "server" {
-  ami                         = data.aws_ssm_parameter.ami.value
-  instance_type               = var.server_instance_type
-  subnet_id                   = aws_subnet.server.id
-  associate_public_ip_address = false
+  ami           = data.aws_ssm_parameter.ami.value
+  instance_type = var.server_instance_type
+  subnet_id     = aws_subnet.server.id
+  # Don't set associate_public_ip_address. With the Elastic IP attached, AWS
+  # reports a public IP, so Terraform would replace EC2 on every up. The
+  # subnet already turns off automatic public IPs.
   vpc_security_group_ids      = [aws_security_group.server.id]
   iam_instance_profile        = aws_iam_instance_profile.server.name
   user_data_replace_on_change = true
