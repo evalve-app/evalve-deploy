@@ -13,7 +13,18 @@ from decimal import Decimal
 
 from evalve import EvalveError, lifecycle, power, terraform
 from evalve.aws import Aws, read_application_secret
-from evalve.readiness import wait_for_backend, wait_for_kitaru
+from evalve.readiness import wait_for_backend, wait_for_dashboard, wait_for_kitaru
+
+# Bump this to the digest of each evalve-backend release. Deployments that
+DEFAULT_BACKEND_IMAGE = (
+    "ghcr.io/evalve-app/evalve-backend@sha256:"
+    "d6099c2996260066ada7026b2cb586f31396bc40f89fb59e29332f8bdec64275"
+)
+# Bump both to a new evalve-ui release. Its Release workflow summary prints them.
+DEFAULT_DASHBOARD_URL = (
+    "https://github.com/evalve-app/evalve-ui/releases/download/v0.1.0/dashboard.tgz"
+)
+DEFAULT_DASHBOARD_SHA256 = "75c84aaf3bbb702d47bbd9ced62863eec1aa1ad5a8df369f31b42645dab47df3"
 
 
 def monthly_estimate(value: str) -> Decimal:
@@ -36,15 +47,34 @@ def hostname(value: str) -> str:
 
 
 def backend_image(value: str) -> str:
+    if value == "default":
+        return value
     if value and not re.fullmatch(
         r"ghcr\.io/evalve-app/evalve-backend@sha256:[a-f0-9]{64}", value
     ):
         raise argparse.ArgumentTypeError(
             "Use an Evalve backend image digest such as "
             "ghcr.io/evalve-app/evalve-backend@sha256:<64 hex characters>, "
-            "or an empty value to remove the backend."
+            '"default" to follow the repo default, or an empty value to remove the backend.'
         )
     return value
+
+
+def choose_backend(flag: str | None, existing: dict) -> tuple[str, bool]:
+    """Return the backend image for this up and whether an Operator pinned it."""
+    if flag == "default":
+        return DEFAULT_BACKEND_IMAGE, False
+    if flag is not None:  # a digest, or "" to remove the backend
+        return flag, True
+    if not existing:  # first deployment
+        return DEFAULT_BACKEND_IMAGE, False
+    saved = existing.get("backend_image", "")
+    pinned = existing.get("backend_image_pinned", False)
+    if pinned or not saved:
+        # Keep a hand-picked image, and never turn a backend on silently,
+        # because that replaces EC2.
+        return saved, pinned
+    return DEFAULT_BACKEND_IMAGE, False
 
 
 def backup_retention_days(value: str) -> int:
@@ -112,8 +142,8 @@ def parser() -> argparse.ArgumentParser:
     up.add_argument(
         "--backend-image",
         type=backend_image,
-        help="Evalve backend image pinned by digest. A later up keeps the saved image; "
-        'pass "" to remove the backend.',
+        help="Evalve backend image digest to pin. Without the flag, up uses the repo "
+        'default. Pass "default" to follow the repo again, or "" to remove the backend.',
     )
     up.add_argument(
         "--monthly-estimate",
@@ -204,6 +234,7 @@ def up(args: argparse.Namespace) -> None:
                     "Run up with the default sslip.io address before switching to a custom domain."
                 )
             verify_dns(domain, public_ip)
+            verify_dns(f"dashboard.{domain}", public_ip)
 
         print(
             f"AWS profile: {aws.profile} | Account: {aws.account} | Region: {aws.region}"
@@ -215,16 +246,15 @@ def up(args: argparse.Namespace) -> None:
         print(
             f"Endpoint: {domain or 'sslip.io'} on one Elastic IP | State bucket: {aws.bucket}"
         )
-        # Without the flag, keep the saved image, so a plain up never removes the backend.
         saved_backend = existing.get("backend_image", "")
-        backend = saved_backend if args.backend_image is None else args.backend_image
-        print(f"Evalve backend: {backend or 'none'}")
+        backend, pinned = choose_backend(args.backend_image, existing)
+        print(f"Evalve backend: {backend or 'none'}{' (pinned)' if pinned else ''}")
+        print(f"Evalve dashboard: {DEFAULT_DASHBOARD_URL}")
         if outputs.get("instance_id") and not args.restore:
             if bool(backend) != bool(saved_backend):
                 print(
                     "Turning the backend on or off replaces the EC2 server. "
-                    "The URL and the RDS data stay. Afterwards, run deploy-dashboard.sh "
-                    "in evalve-ui again."
+                    "The URL and the RDS data stay."
                 )
             elif backend != saved_backend:
                 print("The new backend image restarts only the backend container.")
@@ -272,6 +302,7 @@ def up(args: argparse.Namespace) -> None:
                     if key in existing
                 },
                 "backend_image": backend,
+                "backend_image_pinned": pinned,
             },
         )
         url = outputs["url"]
@@ -283,9 +314,17 @@ def up(args: argparse.Namespace) -> None:
             power.deploy_backend(aws, outputs["instance_id"], backend)
             print("Waiting for the Evalve backend…", flush=True)
             wait_for_backend(url, backend)
+        dashboard_url = outputs["dashboard_url"]
+        print("Installing the Evalve dashboard…", flush=True)
+        power.deploy_dashboard(
+            aws, outputs["instance_id"], DEFAULT_DASHBOARD_URL, DEFAULT_DASHBOARD_SHA256
+        )
+        print("Waiting for the Evalve dashboard…", flush=True)
+        wait_for_dashboard(dashboard_url)
         if restore_etag:
             aws.delete_document(lifecycle.OPERATION_KEY, restore_etag)
         print(f"Bundled dashboard: {url}")
+        print(f"Evalve dashboard: {dashboard_url}")
         if backend:
             print(f"Evalve backend: {url}/evalve/health")
         print(

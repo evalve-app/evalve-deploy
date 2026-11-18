@@ -2,6 +2,8 @@
 
 Decided 2026-11-15. Supersedes ADR 0001.
 
+Status: superseded by ADR 0007 on 2026-11-18. `evalve up` now installs the dashboard. The contract below still applies to servers built before ADR 0007, where `deploy-dashboard.sh` remains the fallback.
+
 Contract updated on 2026-11-17 by [sc-246](https://app.shortcut.com/team-4-1/story/246): the dashboard writes its own site file, so the Caddyfile can hold routes such as `/evalve/*`.
 
 The `evalve-ui` repo deploys the Evalve dashboard itself. Its `scripts/deploy-dashboard.sh` uploads the static build to the Evalve state bucket. AWS Systems Manager then runs `scripts/remote-install.sh` on the EC2 server. That script adds a second Caddy site, `dashboard.<hostname>`, which serves the build and sends `/api/*` to Kitaru. The Bundled dashboard keeps `<hostname>`. This repo does not deploy, pin or check the Evalve dashboard. We chose this because the dashboard team could ship from `evalve-ui` without a change to `evalve up`, and the server team does not have to release a UI image.

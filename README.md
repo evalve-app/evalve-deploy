@@ -42,7 +42,7 @@ Review the monthly cost for the selected region and instance sizes before the pi
 evalve up --server-type t3.small --database-class db.t4g.micro --backup-retention-days 1
 ```
 
-The sizes above are examples. Use one day of automated RDS backup retention for the Free plan pilot. A new team deployment defaults to seven days. `up` prompts for your estimate in USD before credits and shows the account, region, resources, and estimate for confirmation. It sets up the private, versioned S3 state bucket on the first run. When HTTPS is ready, `up` prints the dashboard URL.
+The sizes above are examples. Use one day of automated RDS backup retention for the Free plan pilot. A new team deployment defaults to seven days. `up` prompts for your estimate in USD before credits and shows the account, region, resources, and estimate for confirmation. It sets up the private, versioned S3 state bucket on the first run. When HTTPS is ready, `up` prints the Bundled dashboard URL and the Evalve dashboard URL.
 
 Run `evalve credentials` with the same AWS profile and region to print the `default` username and bootstrap password in your terminal. If you changed the password in Kitaru, use your current password.
 
@@ -50,23 +50,38 @@ Use the same command and options to retry an interrupted provisioning attempt, a
 
 If Terraform fails to save state to S3, Evalve prints the path of its local recovery file and blocks the next operation on that machine. Reconcile the recovery file with the S3 backend before retrying.
 
-To switch to a custom domain, point its A record at the deployment's Elastic IP, wait for DNS to resolve, then run `evalve up --domain <hostname>`. Changing the hostname replaces EC2, so expect a short outage. The Elastic IP and RDS database are retained.
+To switch to a custom domain, point the A records of `<hostname>` and `dashboard.<hostname>` at the deployment's Elastic IP, wait for DNS to resolve, then run `evalve up --domain <hostname>`. `up` checks both names before it changes AWS. Changing the hostname replaces EC2, so expect a short outage. The Elastic IP and RDS database are retained.
 
 ## Evalve dashboard
 
-The `evalve-ui` repo deploys the Evalve dashboard to `https://dashboard.<hostname>` on this server. Run its `scripts/deploy-dashboard.sh` after each `up` that makes a new server or replaces EC2, including `up --restore`. If you use `--domain`, point `dashboard.<domain>` at the server too. ADR 0003 lists the server files that the deploy depends on.
+`up` installs the Evalve dashboard at `https://dashboard.<hostname>` (ADR 0007). The Bundled dashboard keeps `https://<hostname>`. The bundle is an `evalve-ui` release, pinned by URL and SHA-256 in `DEFAULT_DASHBOARD_URL` and `DEFAULT_DASHBOARD_SHA256` in `src/evalve/cli.py`, so you pass no option.
+
+Through Systems Manager, the server downloads the bundle from GitHub, checks the SHA-256, unpacks it into its own release folder, and switches the served `current` link to it. A bad download leaves the served dashboard as it was. A release that is already unpacked is not downloaded again. `up` and `start` then wait until the dashboard answers with the Evalve page, and fail if it doesn't.
+
+The first `up` after an upgrade to this version replaces EC2 once, because the server setup changed. The URL and the RDS data stay. With a custom domain, add the `dashboard.<domain>` DNS record before that `up`.
 
 ## Evalve backend
 
-The Evalve backend holds Loop state (ADR 0004). To run it, pass its image by digest:
+The Evalve backend holds Loop state (ADR 0004). `up` deploys it by default. The image is pinned by digest in `DEFAULT_BACKEND_IMAGE` in `src/evalve/cli.py`, so you don't pass a digest.
 
+To test another image, pin it:
 ```sh
 evalve up --backend-image ghcr.io/evalve-app/evalve-backend@sha256:<digest>
 ```
 
-Pushing a `v*` tag in `evalve-backend` publishes the image, and the workflow summary shows the digest. `up` saves the image in S3 state, so later `up` runs keep it. Pass `--backend-image ""` to remove the backend.
+`up` saves the image and whether you pinned it in S3 state. A pinned image stays until you run `evalve up --backend-image default`. Pass `--backend-image ""` to remove the backend. A plain `up` never turns on a backend that is off.
 
-Caddy sends `https://<hostname>/evalve/*` to the backend. `up` and `start` wait until `/evalve/health` reports a working database and the pinned image. A new image restarts only the backend container. Turning the backend on or off replaces EC2, so run `deploy-dashboard.sh` in `evalve-ui` again afterwards.
+Caddy sends `https://<hostname>/evalve/*` to the backend. `up` and `start` wait until `/evalve/health` reports a working database and the pinned image. A new image restarts only the backend container. Turning the backend on or off replaces EC2, and `up` installs the dashboard on the new server. The dashboard address also sends `/evalve/*` to the backend, so the dashboard can call it.
+
+## Upgrade the backend or the dashboard
+
+Both are pinned in `src/evalve/cli.py`, so an upgrade is a pull request:
+
+1. Tag a release: `v*` in `evalve-backend`, whose workflow summary prints the image digest, or `v*` in `evalve-ui`, whose Release workflow summary prints the bundle URL and SHA-256.
+2. In a pull request, set `DEFAULT_BACKEND_IMAGE`, or `DEFAULT_DASHBOARD_URL` and `DEFAULT_DASHBOARD_SHA256`, to the printed values.
+3. After it merges, one Operator runs `git pull`, `uv tool install --force .`, and `evalve up`. Teammates need nothing, because the shared server is updated.
+
+`uv tool install` copies the code, so the pins update only when you reinstall. Every Operator reinstalls after each pull, because an older install that runs `up` puts the older version back.
 
 ## Stop, start, and recover
 
@@ -75,7 +90,7 @@ evalve stop
 evalve start
 ```
 
-`stop` drains the Evalve backend and Kitaru through Systems Manager and stops EC2. RDS stays running and the Elastic IP stays associated. `start` brings the same instance back and checks the existing HTTPS endpoint and, if the deployment has one, the Evalve backend.
+`stop` drains the Evalve backend and Kitaru through Systems Manager and stops EC2. RDS stays running and the Elastic IP stays associated. `start` brings the same instance back and checks the existing HTTPS endpoint, the Evalve dashboard and, if the deployment has one, the Evalve backend.
 
 ```sh
 evalve down
@@ -84,7 +99,7 @@ evalve up --restore <snapshot-id>
 
 `down` asks you to type `evalve` before making changes. It stops EC2, takes an encrypted manual RDS snapshot, verifies the snapshot and its application secret version, and saves the restore metadata to S3 before deleting the runtime infrastructure. It prints the snapshot ID and restore command. The snapshot, its application secret, and the S3 state bucket remain in AWS.
 
-If teardown is interrupted, rerun `down` to use the same snapshot. If restoration is interrupted, rerun `up --restore` with the same snapshot ID and options. While either operation is pending, Evalve blocks other lifecycle commands. Restore starts at a new `sslip.io` URL and reuses the saved Kitaru credentials. Update your agents' URLs after restoring, or point your custom domain at the new Elastic IP and switch it again.
+If teardown is interrupted, rerun `down` to use the same snapshot. If restoration is interrupted, rerun `up --restore` with the same snapshot ID and options. While either operation is pending, Evalve blocks other lifecycle commands. Restore starts at a new `sslip.io` URL with the dashboard at `dashboard.<new hostname>`, and reuses the saved Kitaru credentials. Update your agents' URLs after restoring, or point your custom domain at the new Elastic IP and switch it again.
 
 ## Local checks
 

@@ -76,7 +76,9 @@ class CredentialsTest(unittest.TestCase):
 
 
 class UpTest(unittest.TestCase):
-    def invoke(self, args, answers, *, existing=None, caller_account=ACCOUNT):
+    def invoke(
+        self, args, answers, *, existing=None, caller_account=ACCOUNT, dashboard_error=None
+    ):
         aws = Mock(
             account=ACCOUNT,
             region="us-east-1",
@@ -102,6 +104,7 @@ class UpTest(unittest.TestCase):
                 "apply",
                 return_value={
                     "url": "https://evalve.example.com",
+                    "dashboard_url": "https://dashboard.evalve.example.com",
                     "instance_id": "i-0123",
                 },
             ) as apply,
@@ -109,13 +112,28 @@ class UpTest(unittest.TestCase):
             patch.object(cli, "wait_for_kitaru") as ready,
             patch.object(cli.power, "deploy_backend") as self.deploy,
             patch.object(cli, "wait_for_backend") as self.backend_check,
+            patch.object(cli.power, "deploy_dashboard") as self.deploy_dashboard,
+            patch.object(cli, "wait_for_dashboard") as self.dashboard_check,
             patch("builtins.input", side_effect=answers),
             redirect_stdout(output),
             redirect_stderr(errors),
         ):
-            # Order: Kitaru is ready, then the image is deployed, then checked.
+            # Order: Kitaru is ready, then the backend image is deployed and
+            # checked, then the dashboard is installed and checked.
             ready.side_effect = lambda *a: self.deploy.assert_not_called()
             self.deploy.side_effect = lambda *a: self.backend_check.assert_not_called()
+            self.backend_check.side_effect = (
+                lambda *a: self.deploy_dashboard.assert_not_called()
+            )
+            self.deploy_dashboard.side_effect = (
+                lambda *a: self.dashboard_check.assert_not_called()
+            )
+            def dashboard_answers(*a):
+                aws.delete_document.assert_not_called()
+                if dashboard_error:
+                    raise dashboard_error
+
+            self.dashboard_check.side_effect = dashboard_answers
             code = cli.main(["up", *args])
         factory.assert_called_once_with("evalve", None)
         return code, aws, apply, ready, dns, output.getvalue(), errors.getvalue()
@@ -167,6 +185,61 @@ class UpTest(unittest.TestCase):
             "evalve credentials with the same AWS profile and region for the bootstrap Admin account login.",
             output,
         )
+
+    def test_up_installs_and_checks_the_pinned_dashboard(self):
+        code, _, _, _, _, output, _ = self.invoke(
+            [
+                "--server-type",
+                "t3.small",
+                "--database-class",
+                "db.t4g.micro",
+                "--monthly-estimate",
+                "35",
+            ],
+            ["yes"],
+        )
+        self.assertEqual(code, 0)
+        self.deploy_dashboard.assert_called_once()
+        self.assertEqual(
+            self.deploy_dashboard.call_args.args[1:],
+            ("i-0123", cli.DEFAULT_DASHBOARD_URL, cli.DEFAULT_DASHBOARD_SHA256),
+        )
+        self.dashboard_check.assert_called_once_with(
+            "https://dashboard.evalve.example.com"
+        )
+        # The confirmation shows the bundle, and the end shows its address.
+        self.assertLess(
+            output.index(f"Evalve dashboard: {cli.DEFAULT_DASHBOARD_URL}"),
+            output.index("Apply Evalve") if "Apply Evalve" in output else len(output),
+        )
+        self.assertIn(
+            "Evalve dashboard: https://dashboard.evalve.example.com\n", output
+        )
+
+    def test_a_failed_dashboard_check_fails_up(self):
+        code, _, _, _, _, output, errors = self.invoke(
+            [
+                "--server-type",
+                "t3.small",
+                "--database-class",
+                "db.t4g.micro",
+                "--monthly-estimate",
+                "35",
+            ],
+            ["yes"],
+            dashboard_error=EvalveError("not answering"),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("not answering", errors)
+        self.assertNotIn("Bundled dashboard:", output)
+
+    def test_the_dashboard_pin_is_a_release_asset_and_a_sha256(self):
+        self.assertRegex(
+            cli.DEFAULT_DASHBOARD_URL,
+            r"^https://github\.com/evalve-app/evalve-ui/releases/download/"
+            r"v\d+\.\d+\.\d+/dashboard\.tgz$",
+        )
+        self.assertRegex(cli.DEFAULT_DASHBOARD_SHA256, r"^[a-f0-9]{64}$")
 
     def test_first_up_can_use_one_day_of_automated_backups(self):
         code, _, apply, _, _, output, _ = self.invoke(
@@ -221,7 +294,14 @@ class UpTest(unittest.TestCase):
             existing=existing,
         )
         self.assertEqual(code, 0)
-        dns.assert_called_once_with("evalve.example.com", "203.0.113.10")
+        # Both names are checked before any AWS change.
+        self.assertEqual(
+            [call.args for call in dns.call_args_list],
+            [
+                ("evalve.example.com", "203.0.113.10"),
+                ("dashboard.evalve.example.com", "203.0.113.10"),
+            ],
+        )
         aws.ensure_application_secret.assert_called_once_with(SECRET)
         self.assertEqual(apply.call_args.args[2]["domain"], "evalve.example.com")
         self.assertEqual(apply.call_args.args[2]["server_instance_type"], "t3.small")
@@ -232,7 +312,7 @@ class UpTest(unittest.TestCase):
     REPLACES = "replaces the EC2 server"
     IN_PLACE = "restarts only the backend container"
 
-    def invoke_existing(self, args, saved_backend):
+    def invoke_existing(self, args, saved_backend, pinned=True):
         deployment = {
             "server_instance_type": "t3.small",
             "database_instance_class": "db.t4g.micro",
@@ -241,6 +321,7 @@ class UpTest(unittest.TestCase):
         }
         if saved_backend is not None:
             deployment["backend_image"] = saved_backend
+            deployment["backend_image_pinned"] = pinned
         with patch.object(cli.power, "instance_state", return_value="running"):
             return self.invoke(
                 [*args, "--monthly-estimate", "35"],
@@ -265,12 +346,67 @@ class UpTest(unittest.TestCase):
         self.backend_check.assert_not_called()
         self.assertNotIn("/evalve/health", output)
 
-    def test_plain_up_keeps_the_saved_backend_without_a_warning(self):
+    def test_plain_up_keeps_a_pinned_backend_without_a_warning(self):
         code, _, apply, _, _, output, _ = self.invoke_existing([], self.BACKEND)
         self.assertEqual(code, 0)
         self.assertEqual(apply.call_args.args[2]["backend_image"], self.BACKEND)
-        self.assertIn(f"Evalve backend: {self.BACKEND}\n", output)
+        self.assertTrue(apply.call_args.args[2]["backend_image_pinned"])
+        self.assertIn(f"Evalve backend: {self.BACKEND} (pinned)\n", output)
         self.assertNotIn(self.REPLACES, output)
+
+    def test_plain_up_moves_an_unpinned_backend_to_the_default_in_place(self):
+        code, _, apply, _, _, output, _ = self.invoke_existing(
+            [], self.BACKEND, pinned=False
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            apply.call_args.args[2]["backend_image"], cli.DEFAULT_BACKEND_IMAGE
+        )
+        self.assertFalse(apply.call_args.args[2]["backend_image_pinned"])
+        self.assertIn(f"Evalve backend: {cli.DEFAULT_BACKEND_IMAGE}\n", output)
+        self.assertIn(self.IN_PLACE, output)
+        self.assertNotIn(self.REPLACES, output)
+
+    def test_choose_backend_follows_the_default_unless_pinned(self):
+        D, B, N = cli.DEFAULT_BACKEND_IMAGE, self.BACKEND, self.NEW_BACKEND
+        for flag, existing, image, pinned in (
+            (None, {}, D, False),  # first up
+            (None, {"backend_image": B}, D, False),  # saved before the marker existed
+            (None, {"backend_image": B, "backend_image_pinned": False}, D, False),
+            (None, {"backend_image": ""}, "", False),  # off stays off
+            (None, {"backend_image": B, "backend_image_pinned": True}, B, True),
+            (None, {"backend_image": "", "backend_image_pinned": True}, "", True),
+            (N, {"backend_image": B}, N, True),  # a digest pins
+            ("", {"backend_image": B}, "", True),  # removal pins
+            ("default", {"backend_image": B, "backend_image_pinned": True}, D, False),
+            ("default", {}, D, False),
+        ):
+            with self.subTest(flag=flag, existing=existing):
+                self.assertEqual(cli.choose_backend(flag, existing), (image, pinned))
+
+    def test_first_up_without_a_flag_deploys_the_default_backend(self):
+        code, _, apply, _, _, output, _ = self.invoke(
+            [
+                "--server-type",
+                "t3.small",
+                "--database-class",
+                "db.t4g.micro",
+                "--monthly-estimate",
+                "35",
+            ],
+            ["yes"],
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            apply.call_args.args[2]["backend_image"], cli.DEFAULT_BACKEND_IMAGE
+        )
+        self.assertFalse(apply.call_args.args[2]["backend_image_pinned"])
+        self.assertEqual(
+            self.deploy.call_args.args[1:], ("i-0123", cli.DEFAULT_BACKEND_IMAGE)
+        )
+
+    def test_default_flag_value_is_accepted(self):
+        self.assertEqual(cli.backend_image("default"), "default")
 
     def test_turning_the_backend_on_or_off_warns_about_replacement(self):
         for flag, saved in ((self.BACKEND, None), ("", self.BACKEND)):
@@ -281,7 +417,8 @@ class UpTest(unittest.TestCase):
                 self.assertEqual(code, 0)
                 self.assertEqual(apply.call_args.args[2]["backend_image"], flag)
                 self.assertIn(self.REPLACES, output)
-                self.assertIn("deploy-dashboard.sh", output)
+                # up reinstalls the dashboard, so there is no manual step left.
+                self.assertNotIn("deploy-dashboard.sh", output)
                 self.assertNotIn(self.IN_PLACE, output)
 
     def test_a_new_backend_image_restarts_only_the_backend(self):
@@ -296,7 +433,7 @@ class UpTest(unittest.TestCase):
 
     def test_same_backend_or_none_saved_gives_no_warning(self):
         for args, saved, shown in (
-            (["--backend-image", self.BACKEND], self.BACKEND, self.BACKEND),
+            (["--backend-image", self.BACKEND], self.BACKEND, f"{self.BACKEND} (pinned)"),
             ([], None, "none"),
         ):
             with self.subTest(saved=saved):

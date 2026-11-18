@@ -1,5 +1,10 @@
+import hashlib
 import io
 import json
+import os
+import subprocess
+import tarfile
+import tempfile
 import unittest
 from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -88,6 +93,48 @@ class PowerTest(unittest.TestCase):
                 if backend:
                     expected.append(("backend", (url, image)))
                 self.assertEqual(calls, expected)
+
+    def test_start_checks_the_dashboard_only_on_a_server_that_has_one(self):
+        url = "https://example.sslip.io"
+        dashboard = "https://dashboard.example.sslip.io"
+        for dashboard_url in (dashboard, None):
+            with self.subTest(dashboard_url=dashboard_url):
+                aws = Mock(account=ACCOUNT, region=REGION)
+                aws.caller_account.return_value = ACCOUNT
+                outputs = {"instance_id": INSTANCE, "url": url, "deployment": CONFIG}
+                if dashboard_url:
+                    outputs["dashboard_url"] = dashboard_url
+                aws.state_outputs.return_value = outputs
+                with (
+                    patch.object(
+                        lifecycle, "pending_operation", return_value=(None, None)
+                    ),
+                    patch("builtins.input", return_value="y"),
+                    redirect_stdout(io.StringIO()) as output,
+                    patch.object(power, "start"),
+                    patch.object(lifecycle, "wait_for_kitaru"),
+                    patch.object(lifecycle, "wait_for_dashboard") as check,
+                ):
+                    lifecycle.power_change(aws, "start")
+                if dashboard_url:
+                    check.assert_called_once_with(dashboard)
+                    self.assertIn(f"Evalve dashboard: {dashboard}", output.getvalue())
+                else:
+                    check.assert_not_called()
+                    self.assertNotIn("Evalve dashboard", output.getvalue())
+
+    def test_dashboard_deploy_waits_for_the_bootstrap_then_installs(self):
+        url = "https://github.com/evalve-app/evalve-ui/releases/download/v9.9.9/dashboard.tgz"
+        sha = "a" * 64
+        aws = Mock()
+        with patch.object(power, "run_server_command") as run:
+            power.deploy_dashboard(aws, INSTANCE, url, sha)
+        run.assert_called_once_with(
+            aws,
+            INSTANCE,
+            ["cloud-init status --wait", power.dashboard_install_script(url, sha)],
+        )
+        self.assertIn("d='/etc/evalve/dashboard'", run.call_args.args[2][1])
 
     def test_backend_deploy_writes_the_image_and_restarts_only_on_a_change(self):
         image = "ghcr.io/evalve-app/evalve-backend@sha256:" + "0" * 64
@@ -350,7 +397,9 @@ class ShutdownTest(unittest.TestCase):
     def test_backend_image_is_saved_for_restore(self):
         image = "ghcr.io/evalve-app/evalve-backend@sha256:" + "0" * 64
         deployment = self.documents[STATE_KEY]["outputs"]["deployment"]
-        deployment["value"] = dict(CONFIG, backend_image=image)
+        deployment["value"] = dict(
+            CONFIG, backend_image=image, backend_image_pinned=True
+        )
         self.invoke()
         manifests = [
             document
@@ -359,6 +408,7 @@ class ShutdownTest(unittest.TestCase):
         ]
         self.assertEqual(len(manifests), 1)
         self.assertEqual(manifests[0]["configuration"]["backend_image"], image)
+        self.assertTrue(manifests[0]["configuration"]["backend_image_pinned"])
 
 
 class RestoreTest(unittest.TestCase):
@@ -366,7 +416,7 @@ class RestoreTest(unittest.TestCase):
         self,
     ):
         # A failed Kitaru or backend check must keep the checkpoint for a retry.
-        for failing in ("kitaru", "backend", None):
+        for failing in ("kitaru", "backend", "dashboard", None):
             healthy = failing is None
             with self.subTest(failing=failing):
                 aws = Mock(account=ACCOUNT, region=REGION, profile="evalve")
@@ -379,6 +429,7 @@ class RestoreTest(unittest.TestCase):
                     domain=None,
                     database_engine_version="16.12",
                     backend_image="ghcr.io/evalve-app/evalve-backend@sha256:" + "0" * 64,
+                    backend_image_pinned=True,
                 )
                 with (
                     patch.object(cli, "check_tools"),
@@ -403,6 +454,7 @@ class RestoreTest(unittest.TestCase):
                         "apply",
                         return_value={
                             "url": "https://example.sslip.io",
+                            "dashboard_url": "https://dashboard.example.sslip.io",
                             "instance_id": INSTANCE,
                         },
                     ) as apply,
@@ -417,6 +469,12 @@ class RestoreTest(unittest.TestCase):
                         "wait_for_backend",
                         side_effect=EvalveError("not ready") if failing == "backend" else None,
                     ),
+                    patch.object(power, "deploy_dashboard") as deploy_dashboard,
+                    patch.object(
+                        cli,
+                        "wait_for_dashboard",
+                        side_effect=EvalveError("not ready") if failing == "dashboard" else None,
+                    ),
                 ):
                     code = cli.main(
                         ["up", "--restore", SNAPSHOT, "--monthly-estimate", "35.00"]
@@ -427,9 +485,15 @@ class RestoreTest(unittest.TestCase):
                 self.assertEqual(variables["backup_retention_days"], 1)
                 self.assertIsNone(variables["domain"])
                 self.assertEqual(variables["backend_image"], result["backend_image"])
+                self.assertTrue(variables["backend_image_pinned"])
                 if failing != "kitaru":
                     # The restored server gets the saved image from up.
                     deploy.assert_called_once_with(aws, INSTANCE, result["backend_image"])
+                if failing not in ("kitaru", "backend"):
+                    # The restored server gets the dashboard from up as well.
+                    deploy_dashboard.assert_called_once_with(
+                        aws, INSTANCE, cli.DEFAULT_DASHBOARD_URL, cli.DEFAULT_DASHBOARD_SHA256
+                    )
                 self.assertEqual(code, 0 if healthy else 1)
                 if healthy:
                     aws.delete_document.assert_called_once_with(
@@ -527,3 +591,90 @@ class DeletionPlanTest(unittest.TestCase):
             EvalveError, "more than the database deletion settings"
         ):
             terraform.unlocks_only(plan, DB)
+
+
+class DashboardInstallTest(unittest.TestCase):
+    """Run the install script in bash against a temporary folder and file:// URLs."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.base = Path(self.tmp.name)
+        self.root = self.base / "dashboard"
+        self.root.mkdir()
+
+    def bundle(self, name, title="evalve"):
+        site = self.base / f"{name}-site"
+        (site / "assets").mkdir(parents=True)
+        (site / "index.html").write_text(f"<title>{title}</title>")
+        (site / "assets" / "app.js").write_text(name)
+        archive = self.base / f"{name}.tgz"
+        with tarfile.open(archive, "w:gz") as tar:
+            tar.add(site, arcname=".")
+        return archive.as_uri(), hashlib.sha256(archive.read_bytes()).hexdigest()
+
+    def install(self, url, sha):
+        script = power.dashboard_install_script(url, sha, str(self.root))
+        return subprocess.run(["bash", "-c", script], capture_output=True, text=True)
+
+    def current(self):
+        return os.readlink(self.root / "current")
+
+    def releases(self):
+        return sorted(path.name for path in (self.root / "releases").iterdir())
+
+    def test_first_install_links_current_relatively_and_leaves_no_temp_files(self):
+        url, sha = self.bundle("one")
+        self.assertEqual(self.install(url, sha).returncode, 0)
+        self.assertEqual(self.current(), f"releases/{sha}")
+        self.assertTrue((self.root / "current" / "index.html").is_file())
+        self.assertEqual(
+            [path.name for path in self.root.iterdir() if path.name.startswith(".")], []
+        )
+
+    def test_an_installed_release_is_not_downloaded_again(self):
+        url, sha = self.bundle("one")
+        self.install(url, sha)
+        missing = (self.base / "missing.tgz").as_uri()
+        self.assertEqual(self.install(missing, sha).returncode, 0)
+        self.assertEqual(self.current(), f"releases/{sha}")
+
+    def test_a_wrong_checksum_fails_and_keeps_the_served_release(self):
+        url, sha = self.bundle("one")
+        self.install(url, sha)
+        other_url, _ = self.bundle("two")
+        result = self.install(other_url, "b" * 64)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.current(), f"releases/{sha}")
+        self.assertEqual(self.releases(), [sha])
+
+    def test_a_failed_download_fails_and_keeps_the_served_release(self):
+        url, sha = self.bundle("one")
+        self.install(url, sha)
+        result = self.install((self.base / "missing.tgz").as_uri(), "c" * 64)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.current(), f"releases/{sha}")
+
+    def test_a_bundle_without_index_html_is_refused(self):
+        site = self.base / "empty-site"
+        site.mkdir()
+        (site / "other.html").write_text("x")
+        archive = self.base / "empty.tgz"
+        with tarfile.open(archive, "w:gz") as tar:
+            tar.add(site, arcname=".")
+        sha = hashlib.sha256(archive.read_bytes()).hexdigest()
+        self.assertNotEqual(self.install(archive.as_uri(), sha).returncode, 0)
+        self.assertFalse((self.root / "current").exists())
+
+    def test_an_upgrade_keeps_the_previous_release_and_removes_older_ones(self):
+        bundles = [self.bundle(name) for name in ("one", "two", "three")]
+        for url, sha in bundles:
+            self.assertEqual(self.install(url, sha).returncode, 0)
+        (_, first), (_, second), (_, third) = bundles
+        self.assertEqual(self.current(), f"releases/{third}")
+        self.assertEqual(self.releases(), sorted([second, third]))
+        # The kept previous release switches back without a download.
+        missing = (self.base / "missing.tgz").as_uri()
+        self.assertEqual(self.install(missing, second).returncode, 0)
+        self.assertEqual(self.current(), f"releases/{second}")
+        self.assertNotIn(first, self.releases())

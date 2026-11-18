@@ -45,6 +45,52 @@ def deploy_backend(aws: Aws, instance_id: str, image: str) -> None:
     run_server_command(aws, instance_id, backend_deploy_commands(image))
 
 
+# Caddy mounts this folder and serves its `current` link. Each release unpacks
+# into releases/<sha256>, and `current` switches to it in one rename.
+DASHBOARD_DIR = "/etc/evalve/dashboard"
+
+
+def dashboard_install_script(url: str, sha256: str, root: str = DASHBOARD_DIR) -> str:
+    """Install the dashboard bundle under root and point `current` at it.
+
+    The download is checked against sha256 before anything changes, so a bad
+    download leaves the served dashboard as it was. A release that is already
+    unpacked is not downloaded again. The link is relative because Caddy sees
+    the folder at another path. The previous release stays for a rollback, and
+    older ones are removed. Caddy reads the files on each request, so it needs
+    no restart. The CLI pins url and sha256 as constants that tests check, so
+    they are safe in the shell.
+    """
+    release = f"releases/{sha256}"
+    return (
+        f"d='{root}'; r=\"$d/{release}\";"
+        ' prev=$(readlink "$d/current" 2>/dev/null || true);'
+        ' if [ ! -f "$r/index.html" ]; then'
+        ' tmp=$(mktemp -d "$d/.tmp-XXXXXX")'
+        f" && curl -fsSL --retry 3 -o \"$tmp/dashboard.tgz\" '{url}'"
+        f" && echo '{sha256}  '\"$tmp/dashboard.tgz\" | sha256sum --check --quiet"
+        ' && mkdir "$tmp/site" && tar -xzf "$tmp/dashboard.tgz" -C "$tmp/site"'
+        ' && test -f "$tmp/site/index.html"'
+        ' && install -d "$d/releases" && rm -rf "$r" && mv "$tmp/site" "$r";'
+        ' rc=$?; rm -rf "$tmp"; [ "$rc" -eq 0 ] || exit "$rc";'
+        " fi;"
+        f" ln -sfn '{release}' \"$d/.current.new\""
+        ' && mv -T "$d/.current.new" "$d/current" || exit 1;'
+        ' for old in "$d"/releases/*; do'
+        ' case "$old" in "$r"|"$d/$prev") ;; *) rm -rf "$old" ;; esac;'
+        " done"
+    )
+
+
+def deploy_dashboard(aws: Aws, instance_id: str, url: str, sha256: str) -> None:
+    run_server_command(
+        aws,
+        instance_id,
+        # On a new server, wait until the bootstrap has made the folder.
+        ["cloud-init status --wait", dashboard_install_script(url, sha256)],
+    )
+
+
 START = [
     "cloud-init status --wait",
     "systemctl start evalve-kitaru.service evalve-refresh.timer evalve-caddy.service",

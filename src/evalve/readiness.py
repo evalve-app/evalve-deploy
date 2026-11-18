@@ -1,6 +1,7 @@
 """Verify the public endpoint before giving its URL to the operator."""
 
 import json
+import re
 import time
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, build_opener
@@ -92,4 +93,31 @@ def wait_for_backend(url: str, image: str, timeout: int = 600) -> None:
     raise EvalveError(
         f"The Evalve backend did not become ready at {url}/evalve/health. "
         "Check the evalve-backend unit on EC2, then retry."
+    )
+
+
+# evalve-ui builds have <title>evalve</title>. The Bundled dashboard has
+# <title>Kitaru</title>, so a route that sends the page to Kitaru fails.
+EVALVE_TITLE = re.compile(rb"<title>\s*evalve\s*</title>", re.IGNORECASE)
+
+
+def wait_for_dashboard(url: str, timeout: int = 180) -> None:
+    """Wait until the Evalve dashboard answers over HTTPS with its own page."""
+    if not url.startswith("https://"):
+        raise EvalveError("Dashboard readiness requires an HTTPS URL.")
+    opener = build_opener(NoRedirect())
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with opener.open(f"{url}/", timeout=8) as response:
+                if EVALVE_TITLE.search(response.read(65_536)):
+                    return
+        except HTTPError as exc:
+            exc.close()
+        except (URLError, OSError):
+            pass  # A new hostname may still be getting its certificate.
+        time.sleep(5)
+    raise EvalveError(
+        f"The Evalve dashboard did not answer at {url}. Check DNS for the dashboard "
+        "hostname and the evalve-caddy unit on EC2, then retry up."
     )
