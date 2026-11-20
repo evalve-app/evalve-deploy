@@ -22,9 +22,9 @@ DEFAULT_BACKEND_IMAGE = (
 )
 # Bump both to a new evalve-ui release. Its Release workflow summary prints them.
 DEFAULT_DASHBOARD_URL = (
-    "https://github.com/evalve-app/evalve-ui/releases/download/v0.1.1/dashboard.tgz"
+    "https://github.com/evalve-app/evalve-ui/releases/download/v0.1.2/dashboard.tgz"
 )
-DEFAULT_DASHBOARD_SHA256 = "9ddba8e5a85272aa3c495daf8242e79c835785cfd6f317f65c63b26be7a92d75"
+DEFAULT_DASHBOARD_SHA256 = "395355dbbc3e91fe118dff204f6acfb5d94057cbdc839a764592346f6127d348"
 
 
 def monthly_estimate(value: str) -> Decimal:
