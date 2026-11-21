@@ -27,7 +27,7 @@ There are four credentials. The server tells them apart by the prefix and by the
 | --- | --- | --- | --- | --- |
 | API key (`KITKEY_…`) | A key that an account owns. | No expiry. The key record has no expiry field. | `rotate` gives a new value. The old value can stay valid for `retain_period_minutes`. | Set `active=false`, delete the key, or deactivate the account. |
 | Session token | A JWT with an account subject. `POST /api/v1/login` gives one for a password or an API key. | `JWT_LIFETIME_SECONDS`, default 3600. | Log in again. | Not possible before expiry, except by deactivation of the account. |
-| Worker token | A JWT with a worker subject (worker ID and account ID). | `WORKER_TOKEN_LIFETIME_SECONDS`, default 3600. | `POST /api/v1/workers/{id}/token`, with an account credential of the account that registered the worker. | Delete the worker, or deactivate the account. |
+| Worker token | A JWT with a worker subject (worker ID and account ID). | `WORKER_TOKEN_LIFETIME_SECONDS`, default 3600. | `POST /api/v1/workers/{id}/token`, with an account credential of the account that registered the worker. | Delete the worker: claims and heartbeats then fail, but the token still passes the other worker routes until it expires. Deactivate the account: all routes fail. |
 | Task token | A JWT with a task subject (task, attempt, worker, account, job, grants). | Task timeout plus `TASK_TOKEN_EXPIRY_LEEWAY_SECONDS` (300). An agent version has a default timeout of 3600 s. | None. | None. A new attempt of the task makes the old token fail on task-checked routes. |
 
 Sources **[V]**:
@@ -62,6 +62,8 @@ A worker has two start modes **[V]**:
 - **Token mode.** The environment has `KITARU_WORKER_ID` and `KITARU_API_TOKEN` and no key. The worker loads the registered worker and uses the token as a fixed bearer. It cannot renew, because the renew route does not accept a worker token (`worker.py:242-263`, `src/kitaru/client/api_client.py:160-163`). `KITARU_WORKER_SCOPE` must not be set in this mode; the scope comes from the server (`src/kitaru/worker/config.py:54-66`, `worker.py:257`).
 
 A third mode exists: `KITARU_WORKER_ID` with an API key. The worker then renews through the key, and the key must be of the account that registered the worker (`worker.py:263`, `worker_service.py:212-213`).
+
+**Revocation of the API key does not stop a worker that runs.** The worker token has no reference to the key (`jwt.py:124-156`) **[V]**. **[I]** The worker continues until the token expires, at most 3600 s by default. Then the renewal fails. Story sc-257 says that the team can revoke the worker's key alone; this is true with that delay. Deactivation of the account stops the worker at once.
 
 ### Does a worker token survive a server restart?
 
@@ -151,9 +153,10 @@ Limits:
 - **Lifetime.** The public route always uses `WORKER_TOKEN_LIFETIME_SECONDS`, default 3600 s. The request has no lifetime field (`workers.py:126-128`, request model at `src/kitaru/api_models/v1/worker.py:150-158`) **[V]**. Only the Modal path of the server can ask for a different lifetime (`ephemeral_workers.py:124-128`). The setting is for the whole server.
 - **No renewal in the task.** The token is fixed for the life of the process (`worker.py:259-262`) **[V]**. The backend can get a new token from the renew route, but a worker that runs cannot take it. When the token expires, claims fail and the worker retries with a delay of up to 60 s until its timeout (`worker.py:326-329`). **[I]** For one Fargate task for each Loop, the Loop must end within the token lifetime, or the team raises `KITARU_SERVER_WORKER_TOKEN_LIFETIME_SECONDS`, or the backend starts a new task with a new worker.
 - **Held tasks at expiry** **[U]**. The task process has its own task token, so it can still report its result **[I]**. The heartbeat fails, and the server can then treat the worker as not live (`WORKER_LIVENESS_TIMEOUT_SECONDS = 60`, `src/kitaru/server/config.py:61`). The code that requeues the tasks of a dead worker was not read.
-- **Revocation.** After the worker is deleted, a claim gives 404 (`task_service.py:119`, `tasks.py:95-96`) and so does a heartbeat (`workers.py:237-238`) **[V]**. Task tokens that were already issued stay valid until they expire **[I]**; the token check does not load the worker (`auth_service.py:463-476`).
+- **Revocation.** After the worker is deleted, a claim gives 404 (`task_service.py:119`, `tasks.py:95-96`) and so does a heartbeat (`workers.py:237-238`) **[V]**. The deletion is not a full revocation **[I]**: the worker-token check loads only the account, not the worker (`auth_service.py:455-461`), so the token still passes the job read and the blob download until it expires. Task tokens that were already issued also stay valid until they expire; the token check does not load the worker (`auth_service.py:463-476`).
 - **Start command.** `python -m kitaru.worker` reads only the environment (`src/kitaru/worker/__main__.py:22-27`) **[V]**. The older note says that it installs no SIGTERM handler. **[U]** It was not checked that `kitaru worker start` works with a token and no key or stored login.
-- **The token is still readable by agent code** (section 3). But it permits much less than a key: only the claims of that worker's scope, for at most the token lifetime, and the backend can end it by deletion of the worker.
+- **The token is still readable by agent code** (section 3). But it permits much less than a key: only the claims of that worker's scope, for at most the token lifetime, and the backend can end the claims by deletion of the worker.
+- **The `evaluator` claim is wide.** Only an `agent` claim can name an ID (`api_models/v1/worker.py:54-66`) **[V]**. `kitaru-workers-for-loops-on-aws.md` shows that an `evaluator` claim matches the evaluator tasks of each job on the server. **[I]** So agent code that reads a worker token with an `evaluator` claim can claim evaluator tasks of other Loops and of Teammates, with their secret env and task tokens. A worker with only the `agent` claim for one agent version does not have this problem, but then a second worker must run the evaluators.
 - **Job owner.** The account in a task token is the owner of the job, not the account of the worker (`tasks.py:116`) **[V]**.
 - `kitaru-workers-for-loops-on-aws.md` says of this mode: "Treat it as internal. Do not build on it." It is not in `docs/book`. That is a judgement about support, not a fact about function. It is the only path at 0.27.6 that keeps a long-lived key out of the task.
 
@@ -170,7 +173,7 @@ Confirmed **[V]**:
 
 Contradicted or corrected:
 
-1. **"A `KITKEY_` key of a service account"** (sc-257 steps 2 and 3, both older notes, and the Kitaru docs at `authentication.md:97`). No API route at 0.27.6 issues a key for a service account. See section 4.
+1. **"A `KITKEY_` key of a service account"** (sc-257 steps 2 and 3, both older notes, section 5 of `kitaru-runner-assumptions.md`, and the Kitaru docs at `authentication.md:97`). No API route at 0.27.6 issues a key for a service account. See section 4.
 2. **sc-257: "Agent code in the task can read the worker's environment."** The environment that the agent gets does not have the key. The agent can read the key by another way, the worker's `/proc` entry. The result is the same; the reason is different, and the fix is isolation or token mode, not an environment change.
 3. **Kitaru docs: "your broad API key is stripped from the child environment."** True, but not sufficient. The docs add the rule on a dedicated identity themselves (`authentication.md:72`).
 4. **"Not verified: whether a worker token survives a Kitaru restart"** (`kitaru-worker-on-aws.md`). The source shows stateless signed tokens. See section 1.
