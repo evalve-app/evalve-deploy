@@ -115,7 +115,7 @@ So the worker stops after one claim call and one read of the job **[I]**.
 ### The job does not exist
 
 - The read of the job fails. The worker logs a warning and continues to poll ([worker.py:395-399][worker]) **[V]**.
-- The client maps HTTP 404 to `NotFoundError`, a subclass of `APIError` ([client/exceptions.py:56, 101][cexc]) **[V]**.
+- The client maps HTTP 404 to `NotFoundError`, a subclass of `APIError` ([client/exceptions.py:101, 132-137, 169-172][cexc]) **[V]**.
 - **[I]** A worker with a wrong or deleted job ID polls until its lifetime timeout or a signal. Without `--timeout` it does not stop.
 
 ### A worker dies while it holds a task of the job
@@ -157,7 +157,7 @@ What the processes share:
 | Item | Shared? | Detail | Source |
 | --- | --- | --- | --- |
 | Blob cache and payload cache | Yes. The default paths are `~/.cache/kitaru/blobs` and `~/.cache/kitaru/payloads`. | The cache is keyed by SHA-256. A write uses a temporary file and an atomic rename. The eviction code accepts that "another process sharing the cache" removed an entry. Each process applies the 1 GiB limit of the payload cache by itself. | [worker.py:55-58, 178-181][worker], [blob_cache.py:113-133, 141-161][bcache] **[V]** |
-| uv environments of evaluators | Yes, through the uv cache of the user | An evaluator runs with `uv run --no-project --python <worker python> --with <dependency>`. Kitaru sets no uv cache directory. | [process.py:429-466][proc], [handlers/evaluation.py:59-67][evalh] **[V]** |
+| uv environments of evaluators | Yes, through the uv cache of the user **[I]** | An evaluator runs with `uv run --no-project --python <worker python> --with <dependency>`. Kitaru sets no uv cache directory **[V]**. So uv uses its default cache, which processes of one user share **[I]**. | [process.py:429-466][proc], [handlers/evaluation.py:59-67][evalh] |
 | Scratch directory of a task | No | Each task gets a new temporary directory `kitaru-task-*`. | [task_runner.py:113-123][runner] **[V]** |
 | Working directory of the agent | Yes | Each agent task runs the command of the agent version in its `working_dir`. The `copy_workdir` hook copies it into the scratch directory of the task. | [handlers/agent.py:55-59][agenth], [hooks.py:82-97][hooks] **[V]** |
 | Environment variables | Yes | Each task gets the full environment of its worker process. The worker removes `KITARU_API_KEY` and gives a token for one task and one attempt. | [process.py:354-362][proc] **[V]** |
@@ -188,6 +188,8 @@ What happens when the wide worker claims an agent task of a Loop:
 
 So one wide worker can make replays of a Run fail, and no setting of the Fargate worker prevents it **[I]**.
 
+The opposite case is more probable and is not visible. A Teammate who registered the agent version from a laptop checkout has the `working_dir` of that version on the laptop. A wide worker on that laptop then completes the agent task with the checkout, the environment and the model keys of the laptop. The replay counts for the Run, and nothing in the Run shows that the Fargate task did not do the work. **[I]** from [handlers/agent.py:55-59][agenth]. Each task records the worker that claimed it in `worker_id` ([task.py:99-101][tmodel]) **[V]**, so a check after the Run is possible.
+
 A wide worker can also claim the evaluator tasks of a Loop. It can run them if it has Python, `uv` and the keys that the evaluator needs ([deploy/workers.md:10][dw]) **[V]**.
 
 The reverse is also true. A Fargate worker with an `evaluator` claim and no job ID claims the evaluator tasks of other Teammates and of other Loops (section 3) **[V]**.
@@ -205,7 +207,7 @@ This section is the author's reasoning from sections 1 to 6. All **[I]**.
 - Shape B is the only shape that claims only the work of the Loop. It follows the one-shot pattern that the Kitaru docs give for CI: `kitaru worker start --job-id "$JOB_ID" --timeout 1800` ([deploy/workers.md:57-61][dw]) **[V]**.
 - In shape B each worker process stops when its job settles (section 4). Give each a `--timeout`, because a wrong job ID does not stop the process.
 - In stage 2 each Experiment has a new agent version. A job-scoped worker can use an `agent` claim with no version, because the job ID already limits it. So shape B does not need to know the agent versions before they exist.
-- No shape reserves the work. A wide worker of a Teammate can claim the tasks first in each shape (section 6). To prevent that, each other worker on the server must have a narrow scope. That is a rule for the team, not a Kitaru setting.
+- No shape reserves the work. A wide worker of a Teammate can claim the tasks first in each shape (section 6). To prevent that, each other worker on the server must have a scope that does not overlap the work of the Loop. A narrow scope is not sufficient: a worker with `agent=<version>` and `evaluator` on a laptop overlaps the Loop. That is a rule for the team, not a Kitaru setting.
 
 ## 8. Check of the earlier research
 
