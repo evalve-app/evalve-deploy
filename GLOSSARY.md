@@ -47,6 +47,14 @@ _Avoid_: result, end reason
 The step that a Loop needs next while it is not at an end state.
 _Avoid_: state, phase
 
+**Drive (a Loop)**:
+To start a Run of a Loop. Only the coding agent of the Loop owner drives a Loop.
+_Avoid_: advance, move forward (for the start of a Run)
+
+**Refresh (a Loop)**:
+To record the result of a finished Run, or an end state that needs no new Run. A refresh starts no Run.
+_Avoid_: advance, poll
+
 **Loop owner**:
 The Kitaru account that started a Loop.
 _Avoid_: owner (alone), creator
@@ -66,6 +74,37 @@ _Avoid_: Loop MCP, MCP server (alone), Kitaru MCP
 **Coding agent**:
 The AI assistant on a Teammate's machine that calls the Evalve MCP. "Agent" alone is the agent that a Loop tests.
 _Avoid_: agent (alone), client
+
+**Agent image**:
+The container image that holds one agent at one commit, with what it needs to run its Runs on AWS: the Kitaru worker and the Supervisor.
+
+**Supervisor**:
+The Evalve program in a Loop task that gets the Assignments and runs one Kitaru worker for each Replay.
+_Avoid_: entrypoint, runner
+
+**Loop task**:
+The task on AWS that runs the Runs of one Loop. A Loop task serves one Loop only.
+_Avoid_: worker task, Fargate worker, the Fargate task of a Loop
+
+**Replay**:
+One execution of the agent on one session of the cohort version, as a part of a Run. Kitaru uses the same term.
+_Avoid_: case
+
+**Assignment**:
+What the Evalve backend gives a Loop task so that it can run one Replay.
+_Avoid_: job (for what the Evalve backend gives)
+
+**Idle (a Loop task)**:
+The condition of a Loop task in which no Replay runs and no Replay waits to start. Only a Loop task is idle.
+_Avoid_: idle (for a Loop)
+
+**Failed start (a Loop task)**:
+A Loop task that stopped, or gave no sign of life, before it was ready to run a Replay.
+_Avoid_: launch failure, boot failure
+
+**Wait limit**:
+The longest time for which a Loop waits for a change before it stops.
+_Avoid_: idle limit
 
 ### Dashboards
 
