@@ -8,26 +8,27 @@ The terms Application secret, Database secret, Backend secret and Instance role 
 
 ## Decision
 
-1. **The rule.** The instance role reads three secrets, each by its name. It reads the Backend secret only when a backend image is set. No other role reads Secrets Manager. A new secret needs a change to this ADR.
+1. **The rule.** The instance role reads three secrets, each by its name. It reads the Backend secret only when a backend image is set. No other running part of the Deployment reads Secrets Manager: not a Loop task, and not the execution role. The Operator is the one exception. With the AWS login of the Operator, the Evalve CLI makes the Application secret and the Backend secret, and it reads the Application secret for `evalve credentials`, for `down` and for the check of a restore. A new secret needs a change to this ADR.
 
-   | Secret | Name | Keys | Reader |
+   | Secret | Name | Keys | Reader in the Deployment |
    |---|---|---|---|
    | Application secret | `evalve/application` | `jwt_signing_key`, `encryption_key`, `admin_password` | Instance role |
    | Database secret | Made and named by RDS | `username`, `password` (the master user) | Instance role |
    | Backend secret | `evalve/backend` | `db_user`, `db_password` | Instance role |
 
-   One Terraform assertion checks the exact list: three secrets with a backend image, two with none.
+   One Terraform assertion checks the exact list for the instance role: three secrets with a backend image, two with none.
 2. **The database user of the backend.** A PostgreSQL role `evalve` owns the database `evalve` and each object in it. The role cannot create a database or a role, and it cannot connect to the database of Kitaru. The running backend holds only the credentials of this role.
 3. **What the separate role protects.** It protects the tables of Kitaru against a mistake in the backend, such as a wrong migration. It does not protect against a backend that an attacker controls, because the backend container can read the credentials of the instance role, and thus the Database secret (point 8).
 4. **The Backend secret.** `evalve up` makes it when a backend image is set, with a random password, as it makes the Application secret. No version of it is pinned: the server always reads the newest value.
 5. **Why these keys are not in the Application secret.** There is one reason for each type of key.
-   * The database password: a new key in the Application secret makes a new version of that secret. The version is a part of the EC2 user data, so each existing Deployment would replace its EC2 instance, and each rotation of the password would do the same.
-   * A key that comes from outside the Deployment, such as the key of the GitHub App: `down` and a restore pin the version of the Application secret to the snapshot, so a restore would bring back an old key.
+   * The database password: `down` and a restore pin the version of the Application secret to the snapshot, and a restored Deployment keeps that pin. Its server would not read a password that is written after the restore. To read it, the pin must change, and the pin is a part of the EC2 user data, so the change replaces the EC2 instance. A Deployment with no pin has no such problem: it reads the newest value on each refresh.
+   * A key that comes from outside the Deployment, such as the key of the GitHub App: for the same pin, a restore would bring back an old key.
 6. **The database setup step.** On each refresh, before the backend starts, the server runs the backend image once with the credentials of the master user. This step makes the database `evalve` and the role `evalve` when they are missing, makes the role the owner of the database and of each object in it, removes the rights of point 2, and sets the password of the role to the value in the Backend secret. A second run changes nothing. The step changes the owner of each object by its name. It does not use `REASSIGN OWNED`, which would also move the database of Kitaru. If the step fails, the backend stays stopped, and Kitaru and the dashboard run as before. The running backend no longer makes its database.
 7. **One path for each case.** The step of point 6 is the only path for a first install, for a Deployment whose database belongs to the master user, for a rotation and for a restore.
    * Rotation: write a new value to the Backend secret. The next refresh sets it in the database and restarts the backend. The command for this belongs to the key rotation story ([sc-267](https://app.shortcut.com/team-4-1/story/267)).
    * Restore: the snapshot brings back the password that the role had at the time of the snapshot. The next refresh sets it to the value in the secret. A restore has no special step.
-   * `down`, and the removal of the backend image: the Backend secret, the role and the database stay.
+   * Removal of the backend image: the Backend secret, the role and the database stay.
+   * `down`: the Backend secret stays. `down` removes the RDS instance. The role and the database are in the snapshot, and they return with a restore.
 8. **The instance role.** The backend container uses the host network, so it can read the credentials of the instance role. ADR 0004 accepts this because the backend runs no agent code. That is still true, and it is not the full reason now: from the epic "03 Experiments on Fargate" the backend needs the role for its own work, so the role cannot be hidden from the container. We accept the wider role for the pilot, with three limits that Terraform assertions check:
    * `iam:PassRole` permits only the one execution role, and only for ECS tasks.
    * The execution role reads no secret, and no task role exists.

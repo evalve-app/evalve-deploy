@@ -121,7 +121,7 @@ The secret `evalve/backend`, which holds the keys that only the Evalve backend n
 _Avoid_: the secret of the backend (for one key in it), worker secret
 
 **Instance role**:
-The AWS identity of the server on which Kitaru, the Evalve dashboard and the Evalve backend run. It is the only identity that reads the three secrets.
+The AWS identity of the server on which Kitaru, the Evalve dashboard and the Evalve backend run. It is the only identity with which a running part of the Deployment reads the secrets. The Operator reads and makes secrets with a separate AWS login.
 _Avoid_: server role, EC2 role
 
 ### Dashboards
