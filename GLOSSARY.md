@@ -106,6 +106,24 @@ _Avoid_: launch failure, boot failure
 The longest time for which a Loop waits for a change before it stops.
 _Avoid_: idle limit
 
+### Secrets
+
+**Application secret**:
+The secret `evalve/application`, which holds the keys that the Kitaru server needs to start: the signing key, the encryption key and the password of the Admin account.
+_Avoid_: Kitaru secret (that is a secret stored on the Kitaru server), app secret
+
+**Database secret**:
+The secret that holds the name and the password of the master user of the database.
+_Avoid_: RDS secret, master secret
+
+**Backend secret**:
+The secret `evalve/backend`, which holds the keys that only the Evalve backend needs.
+_Avoid_: the secret of the backend (for one key in it), worker secret
+
+**Instance role**:
+The AWS identity of the server on which Kitaru, the Evalve dashboard and the Evalve backend run. It is the only identity with which a running part of the Deployment reads the secrets. The Operator reads and makes secrets with a separate AWS login.
+_Avoid_: server role, EC2 role
+
 ### Dashboards
 
 **Bundled dashboard**:

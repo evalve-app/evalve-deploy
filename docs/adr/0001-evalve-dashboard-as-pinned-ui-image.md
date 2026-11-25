@@ -7,7 +7,7 @@ Evalve deploys the Evalve dashboard on the same EC2 host and the same hostname a
 ## Considered options
 
 - **Separate static hosting deployed by `evalve-ui`.** Rejected: the restore changes the API hostname, and a different origin needs CORS changes and bearer tokens that expire after one hour with no refresh.
-- **Private image.** Rejected: EC2 would need a pull token in Secrets Manager, which breaks the policy that allows only two secrets. The image holds only static files and no secrets.
+- **Private image.** Rejected: EC2 would need a pull token in Secrets Manager, which breaks the policy that allows only two secrets. [ADR 0005](0005-the-instance-role-reads-three-named-secrets.md) replaced that policy on 2026-11-25. The image holds only static files and no secrets.
 - **Kitaru `EXTERNAL_UI` and `DASHBOARD_URL`.** Rejected: the settings are not in the Kitaru user docs, and Caddy routing alone does the same job. See `evalve-ui` ADR 0001.
 
 ## Consequences
