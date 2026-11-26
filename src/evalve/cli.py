@@ -18,7 +18,7 @@ from evalve.readiness import wait_for_backend, wait_for_dashboard, wait_for_kita
 # Bump this to the digest of each evalve-backend release. Deployments that
 DEFAULT_BACKEND_IMAGE = (
     "ghcr.io/evalve-app/evalve-backend@sha256:"
-    "f14f842d1bbd3f3d75188c7cd0a01af94da579d056dba6d9a25fd476c2192766"
+    "4c9ef3ccbe36e875b91bda058951856eb1bd6286797fb14b74fa9b46d7f87f31"  # v0.3.0
 )
 # Bump both to a new evalve-ui release. Its Release workflow summary prints them.
 DEFAULT_DASHBOARD_URL = (
