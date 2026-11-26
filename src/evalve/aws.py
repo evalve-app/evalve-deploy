@@ -13,6 +13,7 @@ from evalve import EvalveError
 
 STATE_KEY = "evalve/terraform.tfstate"
 APPLICATION_SECRET = "evalve/application"
+AGENT_IMAGE_REPOSITORY = "evalve-agent-images"
 BACKEND_SECRET = "evalve/backend"
 BACKEND_DB_USER = "evalve"
 PUBLIC_ACCESS_BLOCK = {
@@ -252,6 +253,41 @@ class Aws:
             self.bucket_call(
                 "put-bucket-versioning", "--versioning-configuration", "Status=Enabled"
             )
+
+    def ensure_agent_image_repository(self) -> bool:
+        """Make the ECR repository of the agent images if it is missing.
+
+        Return whether its tags are immutable. An existing repository is only
+        read: its images are data that a restore needs, so no Evalve command
+        changes or deletes it.
+        """
+        try:
+            found = self.call(
+                "ecr",
+                "describe-repositories",
+                "--repository-names",
+                AGENT_IMAGE_REPOSITORY,
+            )
+        except AwsError as exc:
+            if exc.code != "RepositoryNotFoundException":
+                raise
+        else:
+            return found["repositories"][0]["imageTagMutability"] == "IMMUTABLE"
+        try:
+            # Private by default, and with no lifecycle policy.
+            self.call(
+                "ecr",
+                "create-repository",
+                "--repository-name",
+                AGENT_IMAGE_REPOSITORY,
+                "--image-tag-mutability",
+                "IMMUTABLE",
+            )
+        except AwsError as exc:
+            # A concurrent up made it with the same settings.
+            if exc.code != "RepositoryAlreadyExistsException":
+                raise
+        return True
 
     def ensure_application_secret(
         self, existing_arn: str | None = None, *, create: bool = True

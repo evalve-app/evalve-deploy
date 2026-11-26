@@ -77,6 +77,23 @@ The backend logs in as its own role, `evalve`, which can't reach Kitaru's databa
 
 The first `up` after this version replaces EC2 once on every deployment, including those without a backend. Expect a brief outage. The URL and the RDS data stay.
 
+## Loop tasks and agent images
+
+A deployment with a backend also gets what a Loop task needs (ADR 0006 point 13, and `GLOSSARY.md` for the term). A deployment with no backend gets none of this.
+
+`up` makes the ECR repository `evalve-agent-images` before Terraform runs. The repository is private, has immutable tags and has no lifecycle policy. If it exists, `up` uses it and does not change it or its images. The AWS profile of the Operator needs `ecr:DescribeRepositories` and `ecr:CreateRepository`.
+
+The repository stays after `evalve down` and after `evalve up --backend-image ""`. No Evalve command deletes the repository or an image, because a restore needs the agent images: a new build of the same commit gives a different digest. To remove the repository, delete it by hand in ECR.
+
+Terraform adds a security group for Loop tasks and a push-only role for the repository. The security group has no ingress. Its egress is TCP 443, plus the ports that you set:
+
+```sh
+evalve up --loop-task-port 5432      # repeat the flag for more ports
+evalve up --no-loop-task-ports       # back to TCP 443 only
+```
+
+The flags replace the saved list. A plain `up` keeps the list, and `down` and `up --restore` keep it too. Only the instance role can assume the push-only role, which can push an image and cannot delete one.
+
 ## Upgrade the backend or the dashboard
 
 Both are pinned in `src/evalve/cli.py`, so an upgrade is a pull request:
@@ -101,7 +118,7 @@ evalve down
 evalve up --restore <snapshot-id>
 ```
 
-`down` asks you to type `evalve` before making changes. It stops EC2, takes an encrypted manual RDS snapshot, verifies the snapshot and its application secret version, and saves the restore metadata to S3 before deleting the runtime infrastructure. It prints the snapshot ID and restore command. The snapshot, its application secret, and the S3 state bucket remain in AWS.
+`down` asks you to type `evalve` before making changes. It stops EC2, takes an encrypted manual RDS snapshot, verifies the snapshot and its application secret version, and saves the restore metadata to S3 before deleting the runtime infrastructure. It prints the snapshot ID and restore command. The snapshot, its application secret, the S3 state bucket, and the agent image repository remain in AWS.
 
 If teardown is interrupted, rerun `down` to use the same snapshot. If restoration is interrupted, rerun `up --restore` with the same snapshot ID and options. While either operation is pending, Evalve blocks other lifecycle commands. Restore starts at a new `sslip.io` URL with the dashboard at `dashboard.<new hostname>`, and reuses the saved Kitaru credentials. Update your agents' URLs after restoring, or point your custom domain at the new Elastic IP and switch it again.
 

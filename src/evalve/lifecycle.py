@@ -16,6 +16,7 @@ TF_SETTINGS = (
     "snapshot_id",
     "backend_image",
     "backend_image_pinned",
+    "loop_task_egress_ports",
 )
 PHASE_TWO_IMAGE = "zenmldocker/kitaru-server@sha256:05ea00482c0adf4609a34d2c95575a6530ce5d60f6cea0e79716336d9e251d47"
 

@@ -87,6 +87,7 @@ class UpTest(unittest.TestCase):
         dashboard_error=None,
         deploy_error=None,
         backend_error=None,
+        immutable_repository=True,
     ):
         aws = Mock(
             account=ACCOUNT,
@@ -99,6 +100,19 @@ class UpTest(unittest.TestCase):
         aws.caller_account.return_value = caller_account
         aws.ensure_application_secret.return_value = SECRET
         aws.ensure_backend_secret.return_value = BACKEND_SECRET
+        aws.ensure_agent_image_repository.return_value = immutable_repository
+        self.repository_checked_before_apply = None
+
+        def applied(*a):
+            self.repository_checked_before_apply = (
+                aws.ensure_agent_image_repository.called
+            )
+            return {
+                "url": "https://evalve.example.com",
+                "dashboard_url": "https://dashboard.evalve.example.com",
+                "instance_id": "i-0123",
+            }
+
         output = io.StringIO()
         errors = io.StringIO()
         with (
@@ -112,11 +126,7 @@ class UpTest(unittest.TestCase):
             patch.object(
                 terraform,
                 "apply",
-                return_value={
-                    "url": "https://evalve.example.com",
-                    "dashboard_url": "https://dashboard.evalve.example.com",
-                    "instance_id": "i-0123",
-                },
+                side_effect=applied,
             ) as apply,
             patch.object(cli, "verify_dns") as dns,
             patch.object(cli, "wait_for_kitaru") as ready,
@@ -170,6 +180,7 @@ class UpTest(unittest.TestCase):
         self.assertIn(ACCOUNT, output)
         aws.ensure_bucket.assert_not_called()
         aws.ensure_application_secret.assert_not_called()
+        aws.ensure_agent_image_repository.assert_not_called()
         apply.assert_not_called()
         ready.assert_not_called()
 
@@ -197,8 +208,10 @@ class UpTest(unittest.TestCase):
                 "ensure_bucket",
                 "ensure_application_secret",
                 "ensure_backend_secret",
+                "ensure_agent_image_repository",
             ],
         )
+        self.assertTrue(self.repository_checked_before_apply)
         self.assertEqual(apply.call_args.args[2]["application_secret_arn"], SECRET)
         self.assertEqual(apply.call_args.args[2]["backup_retention_days"], 7)
         self.assertIsNone(apply.call_args.args[2]["domain"])
@@ -628,6 +641,85 @@ class UpTest(unittest.TestCase):
         dns.assert_not_called()
         apply.assert_not_called()
 
+    MUTABLE_TAGS = "has mutable tags"
+
+    def test_up_with_a_backend_checks_the_agent_image_repository_before_terraform(
+        self,
+    ):
+        code, aws, _, _, _, output, _ = self.invoke_existing([], self.BACKEND)
+        self.assertEqual(code, 0)
+        aws.ensure_agent_image_repository.assert_called_once_with()
+        self.assertTrue(self.repository_checked_before_apply)
+        self.assertNotIn(self.MUTABLE_TAGS, output)
+
+    def test_up_without_a_backend_leaves_the_agent_image_repository_alone(self):
+        for args, saved in (([], ""), (["--backend-image", ""], self.BACKEND)):
+            with self.subTest(args=args, saved=saved):
+                code, aws, apply, _, _, _, _ = self.invoke_existing(args, saved)
+                self.assertEqual(code, 0)
+                apply.assert_called_once()
+                self.assertEqual(aws.ensure_agent_image_repository.mock_calls, [])
+
+    def test_up_warns_about_an_existing_repository_with_mutable_tags(self):
+        with patch.object(cli.power, "instance_state", return_value="running"):
+            code, _, apply, _, _, output, _ = self.invoke(
+                ["--monthly-estimate", "35"],
+                ["yes"],
+                existing=self.with_ports(None),
+                immutable_repository=False,
+            )
+        self.assertEqual(code, 0)
+        self.assertIn(self.MUTABLE_TAGS, output)
+        apply.assert_called_once()
+
+    def with_ports(self, ports):
+        deployment = {
+            "server_instance_type": "t3.small",
+            "database_instance_class": "db.t4g.micro",
+            "application_secret_arn": SECRET,
+            "domain": None,
+            "backend_image": self.BACKEND,
+            "backend_image_pinned": True,
+        }
+        if ports is not None:
+            deployment["loop_task_egress_ports"] = ports
+        return {"instance_id": "i-0123", "deployment": deployment}
+
+    def applied_ports(self, args, saved):
+        with patch.object(cli.power, "instance_state", return_value="running"):
+            code, _, apply, _, _, _, errors = self.invoke(
+                [*args, "--monthly-estimate", "35"],
+                ["yes"],
+                existing=self.with_ports(saved),
+            )
+        self.assertEqual((code, errors), (0, ""))
+        return apply.call_args.args[2].get("loop_task_egress_ports", [])
+
+    def test_loop_task_port_sets_the_list_and_can_repeat(self):
+        self.assertEqual(self.applied_ports(["--loop-task-port", "5432"], None), [5432])
+        self.assertEqual(
+            self.applied_ports(
+                ["--loop-task-port", "5432", "--loop-task-port", "6379"], [8080]
+            ),
+            [5432, 6379],
+        )
+
+    def test_no_loop_task_ports_empties_the_list(self):
+        self.assertEqual(self.applied_ports(["--no-loop-task-ports"], [5432]), [])
+
+    def test_up_with_neither_port_flag_keeps_the_saved_list(self):
+        self.assertEqual(self.applied_ports([], [5432]), [5432])
+        self.assertEqual(self.applied_ports([], None), [])
+
+    def test_loop_task_port_refuses_443_and_values_that_are_not_ports(self):
+        for value in ("443", "0", "70000", "5432.5", "postgres"):
+            with self.subTest(value), self.assertRaises(SystemExit):
+                self.invoke(["--loop-task-port", value], [])
+
+    def test_the_two_port_flags_cannot_be_used_together(self):
+        with self.assertRaises(SystemExit):
+            self.invoke(["--loop-task-port", "5432", "--no-loop-task-ports"], [])
+
 
 class AwsBootstrapTest(unittest.TestCase):
     def setUp(self):
@@ -806,6 +898,77 @@ class AwsBootstrapTest(unittest.TestCase):
                 with patch.object(self.aws, "call", side_effect=[answer]):
                     with self.assertRaisesRegex(EvalveError, message):
                         self.aws.ensure_backend_secret(BACKEND_SECRET)
+
+    DESCRIBE_REPOSITORY = (
+        "ecr",
+        "describe-repositories",
+        "--repository-names",
+        "evalve-agent-images",
+    )
+
+    def test_missing_agent_image_repository_is_made_with_immutable_tags(self):
+        with patch.object(
+            self.aws,
+            "call",
+            side_effect=[
+                AwsError("ecr describe-repositories", "RepositoryNotFoundException"),
+                {"repository": {"imageTagMutability": "IMMUTABLE"}},
+            ],
+        ) as call:
+            self.assertTrue(self.aws.ensure_agent_image_repository())
+        self.assertEqual(
+            [item.args for item in call.call_args_list],
+            [
+                self.DESCRIBE_REPOSITORY,
+                (
+                    "ecr",
+                    "create-repository",
+                    "--repository-name",
+                    "evalve-agent-images",
+                    "--image-tag-mutability",
+                    "IMMUTABLE",
+                ),
+            ],
+        )
+
+    def test_existing_agent_image_repository_is_only_read(self):
+        for mutability in ("IMMUTABLE", "MUTABLE"):
+            with (
+                self.subTest(mutability),
+                patch.object(
+                    self.aws,
+                    "call",
+                    return_value={
+                        "repositories": [{"imageTagMutability": mutability}]
+                    },
+                ) as call,
+            ):
+                self.assertEqual(
+                    self.aws.ensure_agent_image_repository(),
+                    mutability == "IMMUTABLE",
+                )
+                call.assert_called_once_with(*self.DESCRIBE_REPOSITORY)
+
+    def test_agent_image_repository_made_by_a_concurrent_up_is_used(self):
+        with patch.object(
+            self.aws,
+            "call",
+            side_effect=[
+                AwsError("ecr describe-repositories", "RepositoryNotFoundException"),
+                AwsError("ecr create-repository", "RepositoryAlreadyExistsException"),
+            ],
+        ):
+            self.assertTrue(self.aws.ensure_agent_image_repository())
+
+    def test_agent_image_repository_that_cannot_be_read_stops_up(self):
+        with patch.object(
+            self.aws,
+            "call",
+            side_effect=AwsError("ecr describe-repositories", "AccessDeniedException"),
+        ) as call:
+            with self.assertRaises(AwsError):
+                self.aws.ensure_agent_image_repository()
+        call.assert_called_once()
 
 
 class TerraformApplyTest(unittest.TestCase):

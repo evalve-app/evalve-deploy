@@ -109,6 +109,21 @@ variable "backend_image_pinned" {
   description = "True when the Operator chose backend_image by hand. Evalve then keeps it instead of the repo default."
 }
 
+variable "loop_task_egress_ports" {
+  type        = list(number)
+  default     = []
+  nullable    = false
+  description = "Extra TCP ports that a Loop task can reach on any address. Port 443 is always open."
+
+  validation {
+    condition = alltrue([
+      for port in var.loop_task_egress_ports :
+      port >= 1 && port <= 65535 && floor(port) == port && port != 443
+    ])
+    error_message = "Each Loop task port must be a whole number from 1 to 65535, and not 443, which is always open."
+  }
+}
+
 variable "application_secret_version" {
   type    = string
   default = null
