@@ -140,15 +140,18 @@ class PowerTest(unittest.TestCase):
         image = "ghcr.io/evalve-app/evalve-backend@sha256:" + "0" * 64
         commands = power.backend_deploy_commands(image)
         self.assertEqual(commands[0], "cloud-init status --wait")
+        # Pulled before the start step, which runs setup within systemd's 90 s.
+        self.assertEqual(commands[1], f"docker pull {image}")
+        # Started without waiting, so a setup failure doesn't stop up early.
         self.assertEqual(
-            commands[1],
+            commands[2],
             "if [ \"$(cat /etc/evalve/backend-image.env 2>/dev/null)\""
             f" != 'EVALVE_BACKEND_IMAGE={image}' ]; then"
             f" printf '%s\\n' 'EVALVE_BACKEND_IMAGE={image}'"
             " > /etc/evalve/backend-image.env.new"
             " && mv /etc/evalve/backend-image.env.new /etc/evalve/backend-image.env"
-            " && systemctl restart evalve-backend.service;"
-            " else systemctl start evalve-backend.service; fi",
+            " && systemctl restart --no-block evalve-backend.service;"
+            " else systemctl start --no-block evalve-backend.service; fi",
         )
         aws = Mock()
         with patch.object(power, "run_server_command") as run:
@@ -410,6 +413,61 @@ class ShutdownTest(unittest.TestCase):
         self.assertEqual(manifests[0]["configuration"]["backend_image"], image)
         self.assertTrue(manifests[0]["configuration"]["backend_image_pinned"])
 
+    def test_backend_secret_is_checked_and_saved_for_restore(self):
+        backend_secret = SECRET.replace("evalve/application", "evalve/backend")
+        self.aws.ensure_backend_secret.return_value = backend_secret
+        deployment = self.documents[STATE_KEY]["outputs"]["deployment"]
+        deployment["value"] = dict(CONFIG, backend_secret_arn=backend_secret)
+        self.invoke()
+        self.aws.ensure_backend_secret.assert_called_once_with(
+            backend_secret, create=False
+        )
+        manifests = [
+            document
+            for key, document in self.documents.items()
+            if key.startswith("evalve/snapshots/")
+        ]
+        self.assertEqual(
+            manifests[0]["configuration"]["backend_secret_arn"], backend_secret
+        )
+
+    def test_a_missing_backend_secret_stops_down_before_any_change(self):
+        backend_secret = SECRET.replace("evalve/application", "evalve/backend")
+        self.aws.ensure_backend_secret.side_effect = EvalveError(
+            "The deployment's backend secret is missing."
+        )
+        deployment = self.documents[STATE_KEY]["outputs"]["deployment"]
+        deployment["value"] = dict(CONFIG, backend_secret_arn=backend_secret)
+        with self.assertRaisesRegex(EvalveError, "backend secret is missing"):
+            self.invoke()
+        self.assertEqual(self.events, [])
+        self.aws.create_document.assert_not_called()
+
+    def test_an_older_checkpoint_with_a_backend_and_no_secret_resumes_to_teardown(self):
+        # Settings saved by an older Evalve: a backend image, no Backend secret.
+        image = "ghcr.io/evalve-app/evalve-backend@sha256:" + "0" * 64
+        deployment = self.documents[STATE_KEY]["outputs"]["deployment"]
+        deployment["value"] = dict(CONFIG, backend_image=image)
+        with self.assertRaisesRegex(EvalveError, "Terraform interrupted"):
+            self.invoke(destroy_fails=True)
+        checkpoint = self.documents[lifecycle.OPERATION_KEY]["configuration"]
+        self.assertEqual(checkpoint["backend_image"], image)
+        self.assertNotIn("backend_secret_arn", checkpoint)
+        self.invoke()
+        self.aws.ensure_backend_secret.assert_not_called()
+        self.assertEqual(self.events.count("destroy"), 2)
+        self.assertNotIn(lifecycle.OPERATION_KEY, self.documents)
+
+    def test_a_deployment_without_a_backend_secret_needs_no_check(self):
+        self.invoke()
+        self.aws.ensure_backend_secret.assert_not_called()
+        manifests = [
+            document
+            for key, document in self.documents.items()
+            if key.startswith("evalve/snapshots/")
+        ]
+        self.assertNotIn("backend_secret_arn", manifests[0]["configuration"])
+
 
 class RestoreTest(unittest.TestCase):
     def test_restore_cli_passes_saved_configuration_and_retains_checkpoint_until_ready(
@@ -423,6 +481,8 @@ class RestoreTest(unittest.TestCase):
                 aws.state_outputs.return_value = {}
                 aws.caller_account.return_value = ACCOUNT
                 aws.ensure_application_secret.return_value = SECRET
+                backend_secret = SECRET.replace("evalve/application", "evalve/backend")
+                aws.ensure_backend_secret.return_value = backend_secret
                 result = dict(
                     CONFIG,
                     snapshot_id=SNAPSHOT,
@@ -430,6 +490,7 @@ class RestoreTest(unittest.TestCase):
                     database_engine_version="16.12",
                     backend_image="ghcr.io/evalve-app/evalve-backend@sha256:" + "0" * 64,
                     backend_image_pinned=True,
+                    backend_secret_arn=backend_secret,
                 )
                 with (
                     patch.object(cli, "check_tools"),
@@ -486,11 +547,15 @@ class RestoreTest(unittest.TestCase):
                 self.assertIsNone(variables["domain"])
                 self.assertEqual(variables["backend_image"], result["backend_image"])
                 self.assertTrue(variables["backend_image_pinned"])
+                # The restore reuses the saved secret, so the password stays the same.
+                aws.ensure_backend_secret.assert_called_once_with(backend_secret)
+                self.assertEqual(variables["backend_secret_arn"], backend_secret)
                 if failing != "kitaru":
                     # The restored server gets the saved image from up.
                     deploy.assert_called_once_with(aws, INSTANCE, result["backend_image"])
-                if failing not in ("kitaru", "backend"):
-                    # The restored server gets the dashboard from up as well.
+                if failing != "kitaru":
+                    # The restored server gets the dashboard from up as well,
+                    # even when the backend fails (ADR 0005 point 6).
                     deploy_dashboard.assert_called_once_with(
                         aws, INSTANCE, cli.DEFAULT_DASHBOARD_URL, cli.DEFAULT_DASHBOARD_SHA256
                     )

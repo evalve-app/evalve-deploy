@@ -18,7 +18,7 @@ from evalve.readiness import wait_for_backend, wait_for_dashboard, wait_for_kita
 # Bump this to the digest of each evalve-backend release. Deployments that
 DEFAULT_BACKEND_IMAGE = (
     "ghcr.io/evalve-app/evalve-backend@sha256:"
-    "f14f842d1bbd3f3d75188c7cd0a01af94da579d056dba6d9a25fd476c2192766"
+    "4c9ef3ccbe36e875b91bda058951856eb1bd6286797fb14b74fa9b46d7f87f31"  # v0.3.0
 )
 # Bump both to a new evalve-ui release. Its Release workflow summary prints them.
 DEFAULT_DASHBOARD_URL = (
@@ -249,6 +249,11 @@ def up(args: argparse.Namespace) -> None:
         saved_backend = existing.get("backend_image", "")
         backend, pinned = choose_backend(args.backend_image, existing)
         print(f"Evalve backend: {backend or 'none'}{' (pinned)' if pinned else ''}")
+        if backend and pinned and backend != DEFAULT_BACKEND_IMAGE:
+            print(
+                "The pinned backend image must be v0.3.0 or newer. The server runs "
+                "its setup-database step before each start, and older images lack it."
+            )
         print(f"Evalve dashboard: {DEFAULT_DASHBOARD_URL}")
         if outputs.get("instance_id") and not args.restore:
             if bool(backend) != bool(saved_backend):
@@ -280,6 +285,11 @@ def up(args: argparse.Namespace) -> None:
 
         aws.ensure_bucket()
         secret = aws.ensure_application_secret(existing.get("application_secret_arn"))
+        # With no backend, keep the saved ARN, so a later backend reuses the
+        # same secret and password (ADR 0005 point 7).
+        backend_secret = existing.get("backend_secret_arn") or ""
+        if backend:
+            backend_secret = aws.ensure_backend_secret(backend_secret or None)
         restore_etag = (
             lifecycle.record_restore(aws, args.restore, operation)
             if args.restore
@@ -295,6 +305,7 @@ def up(args: argparse.Namespace) -> None:
                 "database_instance_class": database_class,
                 "backup_retention_days": retention_days,
                 "application_secret_arn": secret,
+                "backend_secret_arn": backend_secret,
                 "domain": domain,
                 **{
                     key: existing[key]
@@ -308,12 +319,15 @@ def up(args: argparse.Namespace) -> None:
         url = outputs["url"]
         print("Waiting for HTTPS, database health, and API authentication…", flush=True)
         wait_for_kitaru(url)
+        # A backend failure is reported after the dashboard, so Kitaru and the
+        # dashboard still work when setup fails (ADR 0005 point 6).
+        backend_error = None
         if backend:
-            # Before the restore checkpoint goes, so a failed deploy can be retried.
             print("Deploying the Evalve backend…", flush=True)
-            power.deploy_backend(aws, outputs["instance_id"], backend)
-            print("Waiting for the Evalve backend…", flush=True)
-            wait_for_backend(url, backend)
+            try:
+                power.deploy_backend(aws, outputs["instance_id"], backend)
+            except EvalveError as exc:
+                backend_error = exc
         dashboard_url = outputs["dashboard_url"]
         print("Installing the Evalve dashboard…", flush=True)
         power.deploy_dashboard(
@@ -321,6 +335,19 @@ def up(args: argparse.Namespace) -> None:
         )
         print("Waiting for the Evalve dashboard…", flush=True)
         wait_for_dashboard(dashboard_url)
+        if backend and backend_error is None:
+            print("Waiting for the Evalve backend…", flush=True)
+            try:
+                wait_for_backend(url, backend)
+            except EvalveError as exc:
+                backend_error = exc
+        if backend_error:
+            # The restore checkpoint stays, so up can be run again.
+            raise EvalveError(
+                f"The Evalve backend did not start ({backend_error}). Kitaru and "
+                "the dashboard are running. On the server, `journalctl -u "
+                "evalve-backend` shows why. Fix it and run evalve up again."
+            )
         if restore_etag:
             aws.delete_document(lifecycle.OPERATION_KEY, restore_etag)
         print(f"Bundled dashboard: {url}")

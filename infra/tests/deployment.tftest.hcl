@@ -90,7 +90,16 @@ run "dedicated_network" {
       var.application_secret_arn,
       aws_db_instance.main.master_user_secret[0].secret_arn,
     ])
-    error_message = "The server role must only read the two Evalve secrets."
+    error_message = "Without a backend, the server role must read only the Application and Database secrets."
+  }
+
+  assert {
+    # Compressed, so the user data stays under the EC2 limit of 16 KB.
+    condition = (
+      strcontains(aws_instance.server.user_data, "echo '${base64gzip(file("refresh.py"))}' | base64 -d | gunzip > /etc/evalve/refresh.py\n") &&
+      length(aws_instance.server.user_data) < 16384
+    )
+    error_message = "The server must get refresh.py compressed, and the user data must stay under 16 KB."
   }
 
   assert {
@@ -223,6 +232,7 @@ run "backend_image_is_recorded_for_restore" {
   variables {
     backend_image        = "ghcr.io/evalve-app/evalve-backend@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     backend_image_pinned = true
+    backend_secret_arn   = "arn:aws:secretsmanager:us-east-1:123456789012:secret:evalve/backend-test"
   }
 
   assert {
@@ -233,6 +243,29 @@ run "backend_image_is_recorded_for_restore" {
   assert {
     condition     = output.deployment.backend_image_pinned == true
     error_message = "The pinned marker must be recorded so down and restore keep a hand-picked image."
+  }
+
+  assert {
+    # Decode config.json from the user data, as the server does on boot.
+    condition = jsondecode(base64decode(regex(
+      "echo '([A-Za-z0-9+/=]+)' \\| base64 -d > /etc/evalve/config\\.json",
+      aws_instance.server.user_data,
+    )[0])).backend_secret_arn == var.backend_secret_arn
+    error_message = "With backend_image, the server config must name the Backend secret."
+  }
+
+  assert {
+    condition     = output.deployment.backend_secret_arn == var.backend_secret_arn
+    error_message = "The Backend secret must be recorded in deployment state so up, down and restore reuse it."
+  }
+
+  assert {
+    condition = toset(jsondecode(aws_iam_role_policy.secrets.policy).Statement[0].Resource) == toset([
+      var.application_secret_arn,
+      aws_db_instance.main.master_user_secret[0].secret_arn,
+      var.backend_secret_arn,
+    ])
+    error_message = "With a backend, the server role must read exactly the Application, Database and Backend secrets."
   }
 
   assert {
@@ -288,10 +321,75 @@ run "reject_backend_image_tag" {
   command = plan
 
   variables {
-    backend_image = "ghcr.io/evalve-app/evalve-backend:v0.1.0"
+    backend_image      = "ghcr.io/evalve-app/evalve-backend:v0.1.0"
+    backend_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:evalve/backend-test"
   }
 
   expect_failures = [var.backend_image]
+}
+
+run "no_backend_keeps_a_saved_backend_secret_out_of_the_server_config" {
+  command = apply
+
+  variables {
+    backend_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:evalve/backend-test"
+  }
+
+  assert {
+    condition = !contains(keys(jsondecode(base64decode(regex(
+      "echo '([A-Za-z0-9+/=]+)' \\| base64 -d > /etc/evalve/config\\.json",
+      aws_instance.server.user_data,
+    )[0]))), "backend_secret_arn")
+    error_message = "Without backend_image, the server config must not name the Backend secret, so the user data stays the same."
+  }
+
+  assert {
+    condition     = output.deployment.backend_secret_arn == var.backend_secret_arn
+    error_message = "With the backend off, the saved Backend secret must stay in deployment state for a later backend."
+  }
+
+  assert {
+    condition = toset(jsondecode(aws_iam_role_policy.secrets.policy).Statement[0].Resource) == toset([
+      var.application_secret_arn,
+      aws_db_instance.main.master_user_secret[0].secret_arn,
+    ])
+    error_message = "With the backend off, the server role must not read the saved Backend secret."
+  }
+}
+
+run "reject_foreign_backend_secret" {
+  command = plan
+
+  variables {
+    backend_secret_arn = "arn:aws:secretsmanager:us-east-1:111111111111:secret:other-account"
+  }
+
+  expect_failures = [var.backend_secret_arn]
+}
+
+run "older_settings_with_a_backend_and_no_secret_still_work" {
+  # Settings saved by an older Evalve, which down and restore pass on.
+  command = apply
+
+  variables {
+    backend_image = "ghcr.io/evalve-app/evalve-backend@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+
+  assert {
+    condition = toset(jsondecode(aws_iam_role_policy.secrets.policy).Statement[0].Resource) == toset([
+      var.application_secret_arn,
+      aws_db_instance.main.master_user_secret[0].secret_arn,
+    ])
+    error_message = "Without a Backend secret ARN, the server role must read only the Application and Database secrets."
+  }
+
+  assert {
+    condition = !contains(keys(jsondecode(base64decode(regex(
+      "echo '([A-Za-z0-9+/=]+)' \\| base64 -d > /etc/evalve/config\\.json",
+      aws_instance.server.user_data,
+    )[0]))), "backend_secret_arn")
+    error_message = "Without a Backend secret ARN, the server config must not name one."
+  }
 }
 
 run "reject_foreign_secret" {

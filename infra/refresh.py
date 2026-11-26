@@ -1,6 +1,7 @@
 """Fetch Kitaru's and the Evalve backend's credentials on EC2 using the instance role."""
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -9,6 +10,13 @@ from tempfile import NamedTemporaryFile
 CONFIG = Path("/etc/evalve/config.json")
 SERVER_ENV = Path("/run/evalve/server.env")
 BACKEND_ENV = Path("/run/evalve-backend/backend.env")
+RDS_CA = "/etc/evalve/rds-ca.pem"
+SETUP_CONTAINER = "evalve-backend-setup"
+SETUP_TIMEOUT = 60
+
+
+class SetupFailed(Exception):
+    """A failure of the database setup step. The message holds no secret."""
 
 
 def get_secret(arn, region, *version_args):
@@ -63,16 +71,89 @@ def build_environment(config, application, database):
     )
 
 
-def build_backend_environment(config, database):
-    # For this epic the backend uses Kitaru's PostgreSQL user (ADR 0004).
+def build_backend_environment(config, backend):
+    # The running backend gets only its own role, never the master user
+    # (ADR 0005 point 2).
     return env_lines(
         {
             "EVALVE_DB_HOST": config["database_host"],
             "EVALVE_DB_PORT": "5432",
-            "EVALVE_DB_USER": database["username"],
-            "EVALVE_DB_PWD": database["password"],
+            "EVALVE_DB_USER": backend["db_user"],
+            "EVALVE_DB_PWD": backend["db_password"],
         }
     )
+
+
+def build_setup_environment(config, database, backend):
+    values = {
+        "EVALVE_DB_HOST": config["database_host"],
+        "EVALVE_DB_PORT": "5432",
+        "EVALVE_DB_ADMIN_USER": database["username"],
+        "EVALVE_DB_ADMIN_PWD": database["password"],
+        "EVALVE_DB_USER": backend["db_user"],
+        "EVALVE_DB_PWD": backend["db_password"],
+        "EVALVE_DB_NAME": "evalve",
+        "EVALVE_KITARU_DB_NAME": "kitaru",
+        "EVALVE_DB_SSL_MODE": "verify-full",
+        "EVALVE_DB_SSL_CA": "/run/rds-ca.pem",
+    }
+    env_lines(values)  # The same line-break check as the env files.
+    return values
+
+
+def backend_secret_arn(config):
+    arn = config.get("backend_secret_arn")
+    if not arn:
+        raise SetupFailed("The server config names no backend secret. Run evalve up.")
+    return arn
+
+
+def remove_setup_container():
+    subprocess.run(
+        ["docker", "rm", "-f", SETUP_CONTAINER], capture_output=True, timeout=30
+    )
+
+
+def run_setup(image, values):
+    """Run the backend image once with setup-database (ADR 0005 point 6).
+
+    The values reach the container through Docker's own environment: the
+    command line holds only their names. The container uses Docker's default
+    network, so it reaches RDS but not the instance role (IMDS hop limit 1).
+    Setup prints only what it changed, so its output can go to the journal.
+    """
+    if not image:
+        raise SetupFailed("The backend image is not set.")
+    remove_setup_container()  # A crash can leave one behind.
+    command = [
+        "docker",
+        "run",
+        "--rm",
+        "--name",
+        SETUP_CONTAINER,
+        "--mount",
+        f"type=bind,src={RDS_CA},dst=/run/rds-ca.pem,readonly",
+        *[argument for name in values for argument in ("--env", name)],
+        image,
+        "python",
+        "-m",
+        "evalve_backend",
+        "setup-database",
+    ]
+    environment = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **values}
+    try:
+        result = subprocess.run(command, env=environment, timeout=SETUP_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        # Stopping the docker client leaves the container running as the
+        # master user, so remove it too.
+        remove_setup_container()
+        raise SetupFailed(
+            f"The database setup did not finish within {SETUP_TIMEOUT} seconds."
+        ) from None
+    if result.returncode != 0:
+        raise SetupFailed(
+            f"The database setup failed (exit code {result.returncode})."
+        )
 
 
 def write_if_changed(destination, content):
@@ -100,10 +181,20 @@ def refresh(config, destination, restart=False):
     return database
 
 
-def refresh_backend(config, destination, restart=False, database=None):
-    if database is None:
-        database = get_secret(config["database_secret_arn"], config["region"])
-    content = build_backend_environment(config, database)
+def start_backend(config, destination, image):
+    """The backend's prep step: set up the database, then write the role login."""
+    arn = backend_secret_arn(config)  # Fail before reading any secret.
+    database = get_secret(config["database_secret_arn"], config["region"])
+    backend = get_secret(arn, config["region"])
+    run_setup(image, build_setup_environment(config, database, backend))
+    write_if_changed(destination, build_backend_environment(config, backend))
+
+
+def refresh_backend(config, destination, restart=False):
+    """The timer's check. A new backend password restarts the backend, and its
+    prep step then runs setup, which sets the password in PostgreSQL."""
+    backend = get_secret(backend_secret_arn(config), config["region"])
+    content = build_backend_environment(config, backend)
     if write_if_changed(destination, content) and restart:
         subprocess.run(["systemctl", "try-restart", "evalve-backend"], check=True)
 
@@ -112,17 +203,21 @@ def main(argv):
     config = json.loads(CONFIG.read_text())
     restart = "--restart-if-changed" in argv
     if "--backend" in argv:
-        refresh_backend(config, BACKEND_ENV)
+        # The backend unit loads the image from /etc/evalve/backend-image.env.
+        start_backend(config, BACKEND_ENV, os.environ.get("EVALVE_BACKEND_IMAGE", ""))
         return
-    database = refresh(config, SERVER_ENV, restart=restart)
+    refresh(config, SERVER_ENV, restart=restart)
     # The backend's runtime directory exists only while its unit runs.
     if restart and BACKEND_ENV.parent.is_dir():
-        refresh_backend(config, BACKEND_ENV, restart=True, database=database)
+        refresh_backend(config, BACKEND_ENV, restart=True)
 
 
 if __name__ == "__main__":
     try:
         main(sys.argv[1:])
+    except SetupFailed as error:
+        print(str(error), file=sys.stderr)
+        sys.exit(1)
     except Exception:
         # Error details can include credentials. Keep them out of instance logs.
         print(

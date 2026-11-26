@@ -27,7 +27,7 @@ dnf install -y docker python3 awscli-2
 systemctl enable --now docker amazon-ssm-agent
 install -d -m 700 /etc/evalve
 echo '${config}' | base64 -d > /etc/evalve/config.json
-echo '${refresh_script}' | base64 -d > /etc/evalve/refresh.py
+echo '${refresh_script}' | base64 -d | gunzip > /etc/evalve/refresh.py
 curl --fail --silent --show-error --retry 5 \
   https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
   -o /etc/evalve/rds-ca.pem

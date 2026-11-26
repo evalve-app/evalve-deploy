@@ -71,7 +71,11 @@ evalve up --backend-image ghcr.io/evalve-app/evalve-backend@sha256:<digest>
 
 `up` saves the image and whether you pinned it in S3 state. A pinned image stays until you run `evalve up --backend-image default`. Pass `--backend-image ""` to remove the backend. A plain `up` never turns on a backend that is off.
 
-Caddy sends `https://<hostname>/evalve/*` to the backend. `up` and `start` wait until `/evalve/health` reports a working database and the pinned image. A new image restarts only the backend container. Turning the backend on or off replaces EC2, and `up` installs the dashboard on the new server. The dashboard address also sends `/evalve/*` to the backend, so the dashboard can call it.
+Caddy sends `https://<hostname>/evalve/*` to the backend. `start` waits until `/evalve/health` reports a working database and the pinned image. `up` checks it after it installs the dashboard. If the backend doesn't come up, `up` ends with an error that points to `journalctl -u evalve-backend`, and Kitaru and the dashboard keep running. Fix the cause and run `up` again. A new image restarts only the backend container. Turning the backend on or off replaces EC2, and `up` installs the dashboard on the new server. The dashboard address also sends `/evalve/*` to the backend, so the dashboard can call it.
+
+The backend logs in as its own role, `evalve`, which can't reach Kitaru's database (ADR 0005). Before each start, the server runs `setup-database` with the master login to create the role and set its password from the secret `evalve/backend`. `journalctl -u evalve-backend` on the server shows what it did.
+
+The first `up` after this version replaces EC2 once on every deployment, including those without a backend. Expect a brief outage. The URL and the RDS data stay.
 
 ## Upgrade the backend or the dashboard
 

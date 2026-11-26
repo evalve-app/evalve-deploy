@@ -28,16 +28,22 @@ def backend_deploy_commands(image: str) -> list[str]:
 
     The image is not in user_data, so a new image does not replace EC2. The CLI
     has already checked that the image is a digest, so it is safe in the shell.
+
+    The image is pulled first: the unit's start step runs setup-database with
+    it, and systemd gives that step 90 seconds. A failed pull stops here and
+    leaves the running backend alone. The unit starts without waiting, so a
+    setup failure doesn't stop up before the dashboard (ADR 0005 point 6).
     """
     line = f"EVALVE_BACKEND_IMAGE={image}"
     return [
         # On a new server, wait until the bootstrap has written the unit.
         "cloud-init status --wait",
+        f"docker pull {image}",
         f"if [ \"$(cat {BACKEND_IMAGE_FILE} 2>/dev/null)\" != '{line}' ]; then"
         f" printf '%s\\n' '{line}' > {BACKEND_IMAGE_FILE}.new"
         f" && mv {BACKEND_IMAGE_FILE}.new {BACKEND_IMAGE_FILE}"
-        f" && systemctl restart {BACKEND_UNIT};"
-        f" else systemctl start {BACKEND_UNIT}; fi",
+        f" && systemctl restart --no-block {BACKEND_UNIT};"
+        f" else systemctl start --no-block {BACKEND_UNIT}; fi",
     ]
 
 

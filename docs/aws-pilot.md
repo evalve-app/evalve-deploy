@@ -23,8 +23,8 @@ The proposed pilot uses Linux `t3.small` with 2 GiB RAM and PostgreSQL `db.t4g.m
 | Elastic IP | $3.65 | [Amazon VPC pricing](https://aws.amazon.com/vpc/pricing/) |
 | Single-AZ RDS `db.t4g.micro` at $0.016/hour | $11.68 | [AWS RDS regional price list](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/us-east-1/index.csv) |
 | RDS gp3 storage | $2.30 | [AWS RDS regional price list](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/us-east-1/index.csv) |
-| Two Secrets Manager secrets and two reads per minute | $1.24 | [AWS Secrets Manager pricing](https://aws.amazon.com/secrets-manager/pricing/) |
-| **Baseline** | **$35.65** | |
+| Three Secrets Manager secrets and three reads per minute | $1.86 | [AWS Secrets Manager pricing](https://aws.amazon.com/secrets-manager/pricing/) |
+| **Baseline** | **$36.27** | |
 
 S3 requests and stored state, retained snapshot storage above the RDS allowance, surplus CPU credits, taxes, and metered data transfer can add to the baseline. Review the estimate again if the pilot account requires another region or instance type. [AWS Pricing Calculator](https://calculator.aws/) · [RDS backup storage](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_WorkingWithAutomatedBackups.html)
 
@@ -32,7 +32,7 @@ S3 requests and stored state, retained snapshot storage above the RDS allowance,
 
 ```sh
 evalve up --region us-east-1 --server-type t3.small --database-class db.t4g.micro \
-  --backup-retention-days 1 --monthly-estimate 36.00
+  --backup-retention-days 1 --monthly-estimate 36.27
 ```
 
 Use one day of automated RDS backup retention for this Free plan pilot. The pilot account rejected the seven-day team default. Manual snapshots created by `evalve down` are separate from the automated backup retention setting.
@@ -49,7 +49,7 @@ At the prompt, approve only after the displayed account, region, backup retentio
 | Check | Pass condition |
 | --- | --- |
 | `evalve stop`, then `evalve start` | The same HTTPS address and dashboard address return, and the pilot login, key, and trace still work. |
-| Optional custom hostname | Point the A records of `<hostname>` and `dashboard.<hostname>` at the existing Elastic IP, then run `evalve up --region us-east-1 --domain <hostname> --monthly-estimate 36.00`. The custom HTTPS address serves the same trace, and `https://dashboard.<hostname>` serves the dashboard. This check needs a DNS name you control. |
+| Optional custom hostname | Point the A records of `<hostname>` and `dashboard.<hostname>` at the existing Elastic IP, then run `evalve up --region us-east-1 --domain <hostname> --monthly-estimate 36.27`. The custom HTTPS address serves the same trace, and `https://dashboard.<hostname>` serves the dashboard. This check needs a DNS name you control. |
 | `evalve down` | The CLI prints a verified snapshot ID and restore command. The EC2 instance, RDS instance, and Elastic IP are removed. The snapshot, application secret, and S3 state bucket remain. |
 | `evalve up --restore <snapshot-id>` | A new HTTPS address comes up, with the dashboard at `dashboard.<new hostname>` and no other command. The original teammate login and API key still authenticate, and the original session ID and trace payloads match. |
 | Finish the pilot | Run `evalve down` again when testing is complete. Note the retained snapshots and any ongoing storage or secret charges. |
