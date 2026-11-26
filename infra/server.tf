@@ -40,9 +40,13 @@ resource "aws_iam_role_policy" "secrets" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect   = "Allow"
-      Action   = "secretsmanager:GetSecretValue"
-      Resource = [var.application_secret_arn, aws_db_instance.main.master_user_secret[0].secret_arn]
+      Effect = "Allow"
+      Action = "secretsmanager:GetSecretValue"
+      # Three named secrets with a backend, two without (ADR 0005 point 1).
+      Resource = concat(
+        [var.application_secret_arn, aws_db_instance.main.master_user_secret[0].secret_arn],
+        var.backend_image != "" ? [var.backend_secret_arn] : [],
+      )
     }]
   })
 }

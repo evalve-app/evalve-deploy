@@ -90,7 +90,7 @@ run "dedicated_network" {
       var.application_secret_arn,
       aws_db_instance.main.master_user_secret[0].secret_arn,
     ])
-    error_message = "The server role must only read the two Evalve secrets."
+    error_message = "Without a backend, the server role must read only the Application and Database secrets."
   }
 
   assert {
@@ -251,6 +251,15 @@ run "backend_image_is_recorded_for_restore" {
   }
 
   assert {
+    condition = toset(jsondecode(aws_iam_role_policy.secrets.policy).Statement[0].Resource) == toset([
+      var.application_secret_arn,
+      aws_db_instance.main.master_user_secret[0].secret_arn,
+      var.backend_secret_arn,
+    ])
+    error_message = "With a backend, the server role must read exactly the Application, Database and Backend secrets."
+  }
+
+  assert {
     condition = (
       strcontains(aws_instance.server.user_data, "cat > /etc/systemd/system/evalve-backend.service") &&
       strcontains(aws_instance.server.user_data, "--name evalve-backend --network host") &&
@@ -328,6 +337,14 @@ run "no_backend_keeps_a_saved_backend_secret_out_of_the_server_config" {
   assert {
     condition     = output.deployment.backend_secret_arn == var.backend_secret_arn
     error_message = "With the backend off, the saved Backend secret must stay in deployment state for a later backend."
+  }
+
+  assert {
+    condition = toset(jsondecode(aws_iam_role_policy.secrets.policy).Statement[0].Resource) == toset([
+      var.application_secret_arn,
+      aws_db_instance.main.master_user_secret[0].secret_arn,
+    ])
+    error_message = "With the backend off, the server role must not read the saved Backend secret."
   }
 }
 
