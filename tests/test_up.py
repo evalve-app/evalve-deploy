@@ -11,6 +11,7 @@ from evalve.aws import PUBLIC_ACCESS_BLOCK, Aws, AwsError
 
 ACCOUNT = "123456789012"
 SECRET = f"arn:aws:secretsmanager:us-east-1:{ACCOUNT}:secret:evalve/application-test"
+BACKEND_SECRET = f"arn:aws:secretsmanager:us-east-1:{ACCOUNT}:secret:evalve/backend-test"
 
 
 class CredentialsTest(unittest.TestCase):
@@ -84,6 +85,8 @@ class UpTest(unittest.TestCase):
         existing=None,
         caller_account=ACCOUNT,
         dashboard_error=None,
+        deploy_error=None,
+        backend_error=None,
         immutable_repository=True,
     ):
         aws = Mock(
@@ -96,6 +99,7 @@ class UpTest(unittest.TestCase):
         aws.read_document.return_value = (None, None)
         aws.caller_account.return_value = caller_account
         aws.ensure_application_secret.return_value = SECRET
+        aws.ensure_backend_secret.return_value = BACKEND_SECRET
         aws.ensure_agent_image_repository.return_value = immutable_repository
         self.repository_checked_before_apply = None
 
@@ -134,22 +138,34 @@ class UpTest(unittest.TestCase):
             redirect_stdout(output),
             redirect_stderr(errors),
         ):
-            # Order: Kitaru is ready, then the backend image is deployed and
-            # checked, then the dashboard is installed and checked.
+            # Order: Kitaru is ready, the backend image is deployed, the
+            # dashboard is installed and checked, then the backend is checked.
             ready.side_effect = lambda *a: self.deploy.assert_not_called()
-            self.deploy.side_effect = lambda *a: self.backend_check.assert_not_called()
-            self.backend_check.side_effect = (
-                lambda *a: self.deploy_dashboard.assert_not_called()
-            )
+
+            def deploy_answers(*a):
+                self.deploy_dashboard.assert_not_called()
+                if deploy_error:
+                    raise deploy_error
+
+            self.deploy.side_effect = deploy_answers
             self.deploy_dashboard.side_effect = (
                 lambda *a: self.dashboard_check.assert_not_called()
             )
+
             def dashboard_answers(*a):
                 aws.delete_document.assert_not_called()
+                self.backend_check.assert_not_called()
                 if dashboard_error:
                     raise dashboard_error
 
             self.dashboard_check.side_effect = dashboard_answers
+
+            def backend_answers(*a):
+                aws.delete_document.assert_not_called()
+                if backend_error:
+                    raise backend_error
+
+            self.backend_check.side_effect = backend_answers
             code = cli.main(["up", *args])
         factory.assert_called_once_with("evalve", None)
         return code, aws, apply, ready, dns, output.getvalue(), errors.getvalue()
@@ -191,6 +207,7 @@ class UpTest(unittest.TestCase):
                 "read_document",
                 "ensure_bucket",
                 "ensure_application_secret",
+                "ensure_backend_secret",
                 "ensure_agent_image_repository",
             ],
         )
@@ -251,6 +268,53 @@ class UpTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("not answering", errors)
         self.assertNotIn("Bundled dashboard:", output)
+
+    FIRST_UP = [
+        "--server-type",
+        "t3.small",
+        "--database-class",
+        "db.t4g.micro",
+        "--monthly-estimate",
+        "35",
+    ]
+
+    def test_a_backend_that_does_not_start_still_gets_the_dashboard_and_fails_up(self):
+        code, _, _, _, _, output, errors = self.invoke(
+            self.FIRST_UP,
+            ["yes"],
+            backend_error=EvalveError("The backend did not become healthy."),
+        )
+        self.assertEqual(code, 1)
+        self.deploy_dashboard.assert_called_once()
+        self.dashboard_check.assert_called_once()
+        self.backend_check.assert_called_once()
+        self.assertIn("The backend did not become healthy.", errors)
+        self.assertIn("Kitaru and the dashboard are running", errors)
+        self.assertIn("journalctl -u evalve-backend", errors)
+        self.assertNotIn("Bundled dashboard:", output)  # The success summary.
+
+    def test_a_failed_backend_deploy_skips_the_backend_check_and_fails_up(self):
+        code, _, _, _, _, _, errors = self.invoke(
+            self.FIRST_UP,
+            ["yes"],
+            deploy_error=EvalveError("The server command failed."),
+        )
+        self.assertEqual(code, 1)
+        self.deploy_dashboard.assert_called_once()
+        self.dashboard_check.assert_called_once()
+        self.backend_check.assert_not_called()
+        self.assertIn("The server command failed.", errors)
+        self.assertIn("journalctl -u evalve-backend", errors)
+
+    def test_a_failed_dashboard_stops_up_before_the_backend_check(self):
+        code, _, _, _, _, _, errors = self.invoke(
+            self.FIRST_UP,
+            ["yes"],
+            dashboard_error=EvalveError("The dashboard is not ready."),
+        )
+        self.assertEqual(code, 1)
+        self.backend_check.assert_not_called()
+        self.assertIn("The dashboard is not ready.", errors)
 
     def test_the_dashboard_pin_is_a_release_asset_and_a_sha256(self):
         self.assertRegex(
@@ -347,6 +411,73 @@ class UpTest(unittest.TestCase):
                 ["yes"],
                 existing={"instance_id": "i-0123", "deployment": deployment},
             )
+
+    def test_first_up_with_a_backend_creates_the_backend_secret(self):
+        code, aws, apply, _, _, _, _ = self.invoke(
+            [
+                "--server-type",
+                "t3.small",
+                "--database-class",
+                "db.t4g.micro",
+                "--monthly-estimate",
+                "35",
+            ],
+            ["yes"],
+        )
+        self.assertEqual(code, 0)
+        aws.ensure_backend_secret.assert_called_once_with(None)
+        self.assertEqual(apply.call_args.args[2]["backend_secret_arn"], BACKEND_SECRET)
+
+    def test_up_reuses_the_saved_backend_secret(self):
+        deployment = {
+            "server_instance_type": "t3.small",
+            "database_instance_class": "db.t4g.micro",
+            "application_secret_arn": SECRET,
+            "backend_secret_arn": BACKEND_SECRET,
+            "backend_image": self.BACKEND,
+            "backend_image_pinned": True,
+            "domain": None,
+        }
+        with patch.object(cli.power, "instance_state", return_value="running"):
+            code, aws, apply, _, _, _, _ = self.invoke(
+                ["--monthly-estimate", "35"],
+                ["yes"],
+                existing={"instance_id": "i-0123", "deployment": deployment},
+            )
+        self.assertEqual(code, 0)
+        aws.ensure_backend_secret.assert_called_once_with(BACKEND_SECRET)
+        self.assertEqual(apply.call_args.args[2]["backend_secret_arn"], BACKEND_SECRET)
+
+    def test_up_without_a_backend_keeps_the_saved_secret_and_makes_none(self):
+        for saved, passed in ((BACKEND_SECRET, BACKEND_SECRET), (None, "")):
+            with self.subTest(saved=saved):
+                deployment = {
+                    "server_instance_type": "t3.small",
+                    "database_instance_class": "db.t4g.micro",
+                    "application_secret_arn": SECRET,
+                    "backend_image": "",
+                    "domain": None,
+                }
+                if saved:
+                    deployment["backend_secret_arn"] = saved
+                with patch.object(cli.power, "instance_state", return_value="running"):
+                    code, aws, apply, _, _, _, _ = self.invoke(
+                        ["--monthly-estimate", "35"],
+                        ["yes"],
+                        existing={"instance_id": "i-0123", "deployment": deployment},
+                    )
+                self.assertEqual(code, 0)
+                aws.ensure_backend_secret.assert_not_called()
+                self.assertEqual(apply.call_args.args[2]["backend_secret_arn"], passed)
+
+    def test_a_pinned_image_that_is_not_the_default_gets_a_warning(self):
+        warning = "must be v0.3.0 or newer"
+        _, _, _, _, _, output, _ = self.invoke_existing([], self.BACKEND, pinned=True)
+        self.assertIn(warning, output)
+        for saved, pinned in ((self.BACKEND, False), (cli.DEFAULT_BACKEND_IMAGE, True)):
+            with self.subTest(pinned=pinned):
+                _, _, _, _, _, output, _ = self.invoke_existing([], saved, pinned)
+                self.assertNotIn(warning, output)
 
     def test_up_checks_the_backend_after_kitaru_only_when_there_is_one(self):
         code, _, _, ready, _, output, _ = self.invoke_existing([], self.BACKEND)
@@ -704,6 +835,69 @@ class AwsBootstrapTest(unittest.TestCase):
         call.assert_called_once_with(
             "secretsmanager", "describe-secret", "--secret-id", SECRET
         )
+
+    def test_backend_secret_holds_the_role_and_a_password_setup_accepts(self):
+        with patch.object(
+            self.aws,
+            "call",
+            side_effect=[
+                AwsError("describe-secret", "ResourceNotFoundException"),
+                {"ARN": BACKEND_SECRET},
+            ],
+        ) as call:
+            self.assertEqual(self.aws.ensure_backend_secret(), BACKEND_SECRET)
+        self.assertEqual(
+            call.call_args_list[0].args,
+            ("secretsmanager", "describe-secret", "--secret-id", "evalve/backend"),
+        )
+        create = call.call_args_list[1]
+        self.assertEqual(create.args[1:4], ("create-secret", "--name", "evalve/backend"))
+        self.assertIn("file:///dev/stdin", create.args)
+        self.assertIn("Key=ManagedBy,Value=evalve", create.args)
+        payload = json.loads(create.kwargs["payload"])
+        self.assertEqual(set(payload), {"db_user", "db_password"})
+        self.assertEqual(payload["db_user"], "evalve")
+        # The setup-database step accepts only these characters.
+        self.assertRegex(payload["db_password"], r"\A[A-Za-z0-9_-]{40,}\Z")
+        self.assertNotIn(payload["db_password"], create.args)
+
+    def test_a_saved_backend_secret_is_reused_without_a_new_password(self):
+        with patch.object(
+            self.aws,
+            "call",
+            return_value={
+                "ARN": BACKEND_SECRET,
+                "Tags": [{"Key": "ManagedBy", "Value": "evalve"}],
+            },
+        ) as call:
+            self.assertEqual(
+                self.aws.ensure_backend_secret(BACKEND_SECRET), BACKEND_SECRET
+            )
+        call.assert_called_once_with(
+            "secretsmanager", "describe-secret", "--secret-id", BACKEND_SECRET
+        )
+
+    def test_backend_secret_refuses_a_missing_foreign_or_deleted_secret(self):
+        cases = [
+            (
+                AwsError("describe-secret", "ResourceNotFoundException"),
+                "backend secret is missing. Recover the original secret",
+            ),
+            ({"ARN": BACKEND_SECRET, "Tags": []}, "evalve/backend already exists without"),
+            (
+                {
+                    "ARN": BACKEND_SECRET,
+                    "DeletedDate": "2026-11-25",
+                    "Tags": [{"Key": "ManagedBy", "Value": "evalve"}],
+                },
+                "evalve/backend is scheduled for deletion",
+            ),
+        ]
+        for answer, message in cases:
+            with self.subTest(message=message):
+                with patch.object(self.aws, "call", side_effect=[answer]):
+                    with self.assertRaisesRegex(EvalveError, message):
+                        self.aws.ensure_backend_secret(BACKEND_SECRET)
 
     DESCRIBE_REPOSITORY = (
         "ecr",

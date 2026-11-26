@@ -179,6 +179,11 @@ def new_shutdown(aws: Aws, state: dict, server: dict, database: dict) -> dict:
         application_secret_arn=secret,
         domain=deployed.get("domain"),
     )
+    if deployed.get("backend_secret_arn"):
+        # Check before anything is deleted, so a restore finds the same password.
+        config["backend_secret_arn"] = aws.ensure_backend_secret(
+            deployed["backend_secret_arn"], create=False
+        )
     if database:
         if not database.get("resource_id") or database.get("identifier") != "evalve":
             raise EvalveError(
@@ -278,7 +283,7 @@ def down(aws: Aws, directory: Path) -> None:
     database = resource_attributes(resources, "aws_db_instance", "main")
     print(f"AWS account: {aws.account} | Region: {aws.region}")
     print(
-        "Evalve will stop serving traffic. The state bucket, application secret, and snapshots will be retained."
+        "Evalve will stop serving traffic. The state bucket, Evalve secrets, and snapshots will be retained."
     )
     if input("Type evalve to confirm teardown: ").strip() != "evalve":
         print("Teardown cancelled.")

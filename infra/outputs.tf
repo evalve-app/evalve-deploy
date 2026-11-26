@@ -18,6 +18,7 @@ output "deployment" {
     backend_image              = var.backend_image
     backend_image_pinned       = var.backend_image_pinned
     loop_task_egress_ports     = var.loop_task_egress_ports
+    backend_secret_arn         = var.backend_secret_arn
     snapshot_id                = var.snapshot_id
   }
 }
