@@ -249,6 +249,11 @@ def up(args: argparse.Namespace) -> None:
         saved_backend = existing.get("backend_image", "")
         backend, pinned = choose_backend(args.backend_image, existing)
         print(f"Evalve backend: {backend or 'none'}{' (pinned)' if pinned else ''}")
+        if backend and pinned and backend != DEFAULT_BACKEND_IMAGE:
+            print(
+                "The pinned backend image must be v0.3.0 or newer. The server runs "
+                "its setup-database step before each start, and older images lack it."
+            )
         print(f"Evalve dashboard: {DEFAULT_DASHBOARD_URL}")
         if outputs.get("instance_id") and not args.restore:
             if bool(backend) != bool(saved_backend):
@@ -280,6 +285,11 @@ def up(args: argparse.Namespace) -> None:
 
         aws.ensure_bucket()
         secret = aws.ensure_application_secret(existing.get("application_secret_arn"))
+        # With no backend, keep the saved ARN, so a later backend reuses the
+        # same secret and password (ADR 0005 point 7).
+        backend_secret = existing.get("backend_secret_arn") or ""
+        if backend:
+            backend_secret = aws.ensure_backend_secret(backend_secret or None)
         restore_etag = (
             lifecycle.record_restore(aws, args.restore, operation)
             if args.restore
@@ -295,6 +305,7 @@ def up(args: argparse.Namespace) -> None:
                 "database_instance_class": database_class,
                 "backup_retention_days": retention_days,
                 "application_secret_arn": secret,
+                "backend_secret_arn": backend_secret,
                 "domain": domain,
                 **{
                     key: existing[key]

@@ -410,6 +410,46 @@ class ShutdownTest(unittest.TestCase):
         self.assertEqual(manifests[0]["configuration"]["backend_image"], image)
         self.assertTrue(manifests[0]["configuration"]["backend_image_pinned"])
 
+    def test_backend_secret_is_checked_and_saved_for_restore(self):
+        backend_secret = SECRET.replace("evalve/application", "evalve/backend")
+        self.aws.ensure_backend_secret.return_value = backend_secret
+        deployment = self.documents[STATE_KEY]["outputs"]["deployment"]
+        deployment["value"] = dict(CONFIG, backend_secret_arn=backend_secret)
+        self.invoke()
+        self.aws.ensure_backend_secret.assert_called_once_with(
+            backend_secret, create=False
+        )
+        manifests = [
+            document
+            for key, document in self.documents.items()
+            if key.startswith("evalve/snapshots/")
+        ]
+        self.assertEqual(
+            manifests[0]["configuration"]["backend_secret_arn"], backend_secret
+        )
+
+    def test_a_missing_backend_secret_stops_down_before_any_change(self):
+        backend_secret = SECRET.replace("evalve/application", "evalve/backend")
+        self.aws.ensure_backend_secret.side_effect = EvalveError(
+            "The deployment's backend secret is missing."
+        )
+        deployment = self.documents[STATE_KEY]["outputs"]["deployment"]
+        deployment["value"] = dict(CONFIG, backend_secret_arn=backend_secret)
+        with self.assertRaisesRegex(EvalveError, "backend secret is missing"):
+            self.invoke()
+        self.assertEqual(self.events, [])
+        self.aws.create_document.assert_not_called()
+
+    def test_a_deployment_without_a_backend_secret_needs_no_check(self):
+        self.invoke()
+        self.aws.ensure_backend_secret.assert_not_called()
+        manifests = [
+            document
+            for key, document in self.documents.items()
+            if key.startswith("evalve/snapshots/")
+        ]
+        self.assertNotIn("backend_secret_arn", manifests[0]["configuration"])
+
 
 class RestoreTest(unittest.TestCase):
     def test_restore_cli_passes_saved_configuration_and_retains_checkpoint_until_ready(
@@ -423,6 +463,8 @@ class RestoreTest(unittest.TestCase):
                 aws.state_outputs.return_value = {}
                 aws.caller_account.return_value = ACCOUNT
                 aws.ensure_application_secret.return_value = SECRET
+                backend_secret = SECRET.replace("evalve/application", "evalve/backend")
+                aws.ensure_backend_secret.return_value = backend_secret
                 result = dict(
                     CONFIG,
                     snapshot_id=SNAPSHOT,
@@ -430,6 +472,7 @@ class RestoreTest(unittest.TestCase):
                     database_engine_version="16.12",
                     backend_image="ghcr.io/evalve-app/evalve-backend@sha256:" + "0" * 64,
                     backend_image_pinned=True,
+                    backend_secret_arn=backend_secret,
                 )
                 with (
                     patch.object(cli, "check_tools"),
@@ -486,6 +529,9 @@ class RestoreTest(unittest.TestCase):
                 self.assertIsNone(variables["domain"])
                 self.assertEqual(variables["backend_image"], result["backend_image"])
                 self.assertTrue(variables["backend_image_pinned"])
+                # The restore reuses the saved secret, so the password stays the same.
+                aws.ensure_backend_secret.assert_called_once_with(backend_secret)
+                self.assertEqual(variables["backend_secret_arn"], backend_secret)
                 if failing != "kitaru":
                     # The restored server gets the saved image from up.
                     deploy.assert_called_once_with(aws, INSTANCE, result["backend_image"])

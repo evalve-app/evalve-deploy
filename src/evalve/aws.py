@@ -13,6 +13,8 @@ from evalve import EvalveError
 
 STATE_KEY = "evalve/terraform.tfstate"
 APPLICATION_SECRET = "evalve/application"
+BACKEND_SECRET = "evalve/backend"
+BACKEND_DB_USER = "evalve"
 PUBLIC_ACCESS_BLOCK = {
     "BlockPublicAcls": True,
     "IgnorePublicAcls": True,
@@ -254,55 +256,87 @@ class Aws:
     def ensure_application_secret(
         self, existing_arn: str | None = None, *, create: bool = True
     ) -> str:
+        return self._ensure_secret(
+            APPLICATION_SECRET,
+            "application secret",
+            lambda: {
+                "jwt_signing_key": secrets.token_urlsafe(48),
+                "encryption_key": secrets.token_urlsafe(48),
+                "admin_password": secrets.token_urlsafe(32),
+            },
+            existing_arn,
+            create,
+        )
+
+    def ensure_backend_secret(
+        self, existing_arn: str | None = None, *, create: bool = True
+    ) -> str:
+        # token_urlsafe uses only letters, digits, - and _, the characters
+        # that the backend's setup-database step accepts (ADR 0005).
+        return self._ensure_secret(
+            BACKEND_SECRET,
+            "backend secret",
+            lambda: {
+                "db_user": BACKEND_DB_USER,
+                "db_password": secrets.token_urlsafe(32),
+            },
+            existing_arn,
+            create,
+        )
+
+    def _ensure_secret(
+        self,
+        name: str,
+        label: str,
+        new_values,
+        existing_arn: str | None,
+        create: bool,
+    ) -> str:
+        """Return the ARN of an Evalve secret, and create it on the first run.
+
+        new_values runs only when the secret is created, so a reuse never makes
+        a new password. The values go through stdin, never the command line.
+        """
         try:
             secret = self.call(
                 "secretsmanager",
                 "describe-secret",
                 "--secret-id",
-                existing_arn or APPLICATION_SECRET,
+                existing_arn or name,
             )
         except AwsError as exc:
             if exc.code != "ResourceNotFoundException":
                 raise
             if existing_arn or not create:
                 raise EvalveError(
-                    "The deployment's application secret is missing. Recover the original secret before applying."
+                    f"The deployment's {label} is missing. Recover the original secret before applying."
                 ) from exc
-            payload = json.dumps(
-                {
-                    "jwt_signing_key": secrets.token_urlsafe(48),
-                    "encryption_key": secrets.token_urlsafe(48),
-                    "admin_password": secrets.token_urlsafe(32),
-                }
-            )
             try:
                 return self.call(
                     "secretsmanager",
                     "create-secret",
                     "--name",
-                    APPLICATION_SECRET,
+                    name,
                     "--secret-string",
                     "file:///dev/stdin",
                     "--tags",
                     "Key=ManagedBy,Value=evalve",
-                    payload=payload,
+                    payload=json.dumps(new_values()),
                 )["ARN"]
             except AwsError as create_error:
                 if create_error.code != "ResourceExistsException":
                     raise
-            secret = self.call(
-                "secretsmanager", "describe-secret", "--secret-id", APPLICATION_SECRET
-            )
+            secret = self.call("secretsmanager", "describe-secret", "--secret-id", name)
 
         if secret.get("DeletedDate"):
             raise EvalveError(
-                f"Secret {APPLICATION_SECRET} is scheduled for deletion. Recover it before retrying."
+                f"Secret {name} is scheduled for deletion. Recover it before retrying."
             )
         if {tag["Key"]: tag["Value"] for tag in secret.get("Tags", [])}.get(
             "ManagedBy"
         ) != "evalve":
             raise EvalveError(
-                f"Secret {APPLICATION_SECRET} already exists without the Evalve ownership tag."
+                f"Secret {name} already exists without the Evalve ownership tag."
             )
         return secret["ARN"]
 
