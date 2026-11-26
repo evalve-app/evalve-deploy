@@ -140,15 +140,18 @@ class PowerTest(unittest.TestCase):
         image = "ghcr.io/evalve-app/evalve-backend@sha256:" + "0" * 64
         commands = power.backend_deploy_commands(image)
         self.assertEqual(commands[0], "cloud-init status --wait")
+        # Pulled before the start step, which runs setup within systemd's 90 s.
+        self.assertEqual(commands[1], f"docker pull {image}")
+        # Started without waiting, so a setup failure doesn't stop up early.
         self.assertEqual(
-            commands[1],
+            commands[2],
             "if [ \"$(cat /etc/evalve/backend-image.env 2>/dev/null)\""
             f" != 'EVALVE_BACKEND_IMAGE={image}' ]; then"
             f" printf '%s\\n' 'EVALVE_BACKEND_IMAGE={image}'"
             " > /etc/evalve/backend-image.env.new"
             " && mv /etc/evalve/backend-image.env.new /etc/evalve/backend-image.env"
-            " && systemctl restart evalve-backend.service;"
-            " else systemctl start evalve-backend.service; fi",
+            " && systemctl restart --no-block evalve-backend.service;"
+            " else systemctl start --no-block evalve-backend.service; fi",
         )
         aws = Mock()
         with patch.object(power, "run_server_command") as run:
@@ -535,8 +538,9 @@ class RestoreTest(unittest.TestCase):
                 if failing != "kitaru":
                     # The restored server gets the saved image from up.
                     deploy.assert_called_once_with(aws, INSTANCE, result["backend_image"])
-                if failing not in ("kitaru", "backend"):
-                    # The restored server gets the dashboard from up as well.
+                if failing != "kitaru":
+                    # The restored server gets the dashboard from up as well,
+                    # even when the backend fails (ADR 0005 point 6).
                     deploy_dashboard.assert_called_once_with(
                         aws, INSTANCE, cli.DEFAULT_DASHBOARD_URL, cli.DEFAULT_DASHBOARD_SHA256
                     )

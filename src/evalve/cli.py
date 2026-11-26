@@ -319,12 +319,15 @@ def up(args: argparse.Namespace) -> None:
         url = outputs["url"]
         print("Waiting for HTTPS, database health, and API authentication…", flush=True)
         wait_for_kitaru(url)
+        # A backend failure is reported after the dashboard, so Kitaru and the
+        # dashboard still work when setup fails (ADR 0005 point 6).
+        backend_error = None
         if backend:
-            # Before the restore checkpoint goes, so a failed deploy can be retried.
             print("Deploying the Evalve backend…", flush=True)
-            power.deploy_backend(aws, outputs["instance_id"], backend)
-            print("Waiting for the Evalve backend…", flush=True)
-            wait_for_backend(url, backend)
+            try:
+                power.deploy_backend(aws, outputs["instance_id"], backend)
+            except EvalveError as exc:
+                backend_error = exc
         dashboard_url = outputs["dashboard_url"]
         print("Installing the Evalve dashboard…", flush=True)
         power.deploy_dashboard(
@@ -332,6 +335,19 @@ def up(args: argparse.Namespace) -> None:
         )
         print("Waiting for the Evalve dashboard…", flush=True)
         wait_for_dashboard(dashboard_url)
+        if backend and backend_error is None:
+            print("Waiting for the Evalve backend…", flush=True)
+            try:
+                wait_for_backend(url, backend)
+            except EvalveError as exc:
+                backend_error = exc
+        if backend_error:
+            # The restore checkpoint stays, so up can be run again.
+            raise EvalveError(
+                f"The Evalve backend did not start ({backend_error}). Kitaru and "
+                "the dashboard are running. On the server, `journalctl -u "
+                "evalve-backend` shows why. Fix it and run evalve up again."
+            )
         if restore_etag:
             aws.delete_document(lifecycle.OPERATION_KEY, restore_etag)
         print(f"Bundled dashboard: {url}")

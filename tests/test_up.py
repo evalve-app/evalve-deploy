@@ -78,7 +78,15 @@ class CredentialsTest(unittest.TestCase):
 
 class UpTest(unittest.TestCase):
     def invoke(
-        self, args, answers, *, existing=None, caller_account=ACCOUNT, dashboard_error=None
+        self,
+        args,
+        answers,
+        *,
+        existing=None,
+        caller_account=ACCOUNT,
+        dashboard_error=None,
+        deploy_error=None,
+        backend_error=None,
     ):
         aws = Mock(
             account=ACCOUNT,
@@ -120,22 +128,34 @@ class UpTest(unittest.TestCase):
             redirect_stdout(output),
             redirect_stderr(errors),
         ):
-            # Order: Kitaru is ready, then the backend image is deployed and
-            # checked, then the dashboard is installed and checked.
+            # Order: Kitaru is ready, the backend image is deployed, the
+            # dashboard is installed and checked, then the backend is checked.
             ready.side_effect = lambda *a: self.deploy.assert_not_called()
-            self.deploy.side_effect = lambda *a: self.backend_check.assert_not_called()
-            self.backend_check.side_effect = (
-                lambda *a: self.deploy_dashboard.assert_not_called()
-            )
+
+            def deploy_answers(*a):
+                self.deploy_dashboard.assert_not_called()
+                if deploy_error:
+                    raise deploy_error
+
+            self.deploy.side_effect = deploy_answers
             self.deploy_dashboard.side_effect = (
                 lambda *a: self.dashboard_check.assert_not_called()
             )
+
             def dashboard_answers(*a):
                 aws.delete_document.assert_not_called()
+                self.backend_check.assert_not_called()
                 if dashboard_error:
                     raise dashboard_error
 
             self.dashboard_check.side_effect = dashboard_answers
+
+            def backend_answers(*a):
+                aws.delete_document.assert_not_called()
+                if backend_error:
+                    raise backend_error
+
+            self.backend_check.side_effect = backend_answers
             code = cli.main(["up", *args])
         factory.assert_called_once_with("evalve", None)
         return code, aws, apply, ready, dns, output.getvalue(), errors.getvalue()
@@ -235,6 +255,53 @@ class UpTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("not answering", errors)
         self.assertNotIn("Bundled dashboard:", output)
+
+    FIRST_UP = [
+        "--server-type",
+        "t3.small",
+        "--database-class",
+        "db.t4g.micro",
+        "--monthly-estimate",
+        "35",
+    ]
+
+    def test_a_backend_that_does_not_start_still_gets_the_dashboard_and_fails_up(self):
+        code, _, _, _, _, output, errors = self.invoke(
+            self.FIRST_UP,
+            ["yes"],
+            backend_error=EvalveError("The backend did not become healthy."),
+        )
+        self.assertEqual(code, 1)
+        self.deploy_dashboard.assert_called_once()
+        self.dashboard_check.assert_called_once()
+        self.backend_check.assert_called_once()
+        self.assertIn("The backend did not become healthy.", errors)
+        self.assertIn("Kitaru and the dashboard are running", errors)
+        self.assertIn("journalctl -u evalve-backend", errors)
+        self.assertNotIn("Bundled dashboard:", output)  # The success summary.
+
+    def test_a_failed_backend_deploy_skips_the_backend_check_and_fails_up(self):
+        code, _, _, _, _, _, errors = self.invoke(
+            self.FIRST_UP,
+            ["yes"],
+            deploy_error=EvalveError("The server command failed."),
+        )
+        self.assertEqual(code, 1)
+        self.deploy_dashboard.assert_called_once()
+        self.dashboard_check.assert_called_once()
+        self.backend_check.assert_not_called()
+        self.assertIn("The server command failed.", errors)
+        self.assertIn("journalctl -u evalve-backend", errors)
+
+    def test_a_failed_dashboard_stops_up_before_the_backend_check(self):
+        code, _, _, _, _, _, errors = self.invoke(
+            self.FIRST_UP,
+            ["yes"],
+            dashboard_error=EvalveError("The dashboard is not ready."),
+        )
+        self.assertEqual(code, 1)
+        self.backend_check.assert_not_called()
+        self.assertIn("The dashboard is not ready.", errors)
 
     def test_the_dashboard_pin_is_a_release_asset_and_a_sha256(self):
         self.assertRegex(
