@@ -443,6 +443,21 @@ class ShutdownTest(unittest.TestCase):
         self.assertEqual(self.events, [])
         self.aws.create_document.assert_not_called()
 
+    def test_an_older_checkpoint_with_a_backend_and_no_secret_resumes_to_teardown(self):
+        # Settings saved by an older Evalve: a backend image, no Backend secret.
+        image = "ghcr.io/evalve-app/evalve-backend@sha256:" + "0" * 64
+        deployment = self.documents[STATE_KEY]["outputs"]["deployment"]
+        deployment["value"] = dict(CONFIG, backend_image=image)
+        with self.assertRaisesRegex(EvalveError, "Terraform interrupted"):
+            self.invoke(destroy_fails=True)
+        checkpoint = self.documents[lifecycle.OPERATION_KEY]["configuration"]
+        self.assertEqual(checkpoint["backend_image"], image)
+        self.assertNotIn("backend_secret_arn", checkpoint)
+        self.invoke()
+        self.aws.ensure_backend_secret.assert_not_called()
+        self.assertEqual(self.events.count("destroy"), 2)
+        self.assertNotIn(lifecycle.OPERATION_KEY, self.documents)
+
     def test_a_deployment_without_a_backend_secret_needs_no_check(self):
         self.invoke()
         self.aws.ensure_backend_secret.assert_not_called()

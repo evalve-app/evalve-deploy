@@ -94,14 +94,11 @@ variable "backend_secret_arn" {
   nullable    = false
   description = "Secrets Manager ARN of the Backend secret: the PostgreSQL role and password of the Evalve backend. Empty when no backend was ever deployed."
 
+  # No rule that a backend image needs this ARN: settings saved by an older
+  # Evalve have a backend image and no ARN, and down must still tear them down.
   validation {
     condition     = var.backend_secret_arn == "" || startswith(var.backend_secret_arn, "arn:aws:secretsmanager:${var.region}:${var.account_id}:secret:")
     error_message = "The backend secret must belong to the deployment account and region."
-  }
-
-  validation {
-    condition     = var.backend_image == "" || var.backend_secret_arn != ""
-    error_message = "A backend image needs the backend secret. Run evalve up, which creates it."
   }
 }
 

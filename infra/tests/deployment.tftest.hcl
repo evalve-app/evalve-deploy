@@ -367,14 +367,29 @@ run "reject_foreign_backend_secret" {
   expect_failures = [var.backend_secret_arn]
 }
 
-run "reject_backend_without_backend_secret" {
-  command = plan
+run "older_settings_with_a_backend_and_no_secret_still_work" {
+  # Settings saved by an older Evalve, which down and restore pass on.
+  command = apply
 
   variables {
     backend_image = "ghcr.io/evalve-app/evalve-backend@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   }
 
-  expect_failures = [var.backend_secret_arn]
+  assert {
+    condition = toset(jsondecode(aws_iam_role_policy.secrets.policy).Statement[0].Resource) == toset([
+      var.application_secret_arn,
+      aws_db_instance.main.master_user_secret[0].secret_arn,
+    ])
+    error_message = "Without a Backend secret ARN, the server role must read only the Application and Database secrets."
+  }
+
+  assert {
+    condition = !contains(keys(jsondecode(base64decode(regex(
+      "echo '([A-Za-z0-9+/=]+)' \\| base64 -d > /etc/evalve/config\\.json",
+      aws_instance.server.user_data,
+    )[0]))), "backend_secret_arn")
+    error_message = "Without a Backend secret ARN, the server config must not name one."
+  }
 }
 
 run "reject_foreign_secret" {

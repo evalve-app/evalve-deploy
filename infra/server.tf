@@ -45,7 +45,7 @@ resource "aws_iam_role_policy" "secrets" {
       # Three named secrets with a backend, two without (ADR 0005 point 1).
       Resource = concat(
         [var.application_secret_arn, aws_db_instance.main.master_user_secret[0].secret_arn],
-        var.backend_image != "" ? [var.backend_secret_arn] : [],
+        var.backend_image != "" && var.backend_secret_arn != "" ? [var.backend_secret_arn] : [],
       )
     }]
   })
@@ -79,7 +79,7 @@ resource "aws_instance" "server" {
         database_host              = aws_db_instance.main.address
         hostname                   = local.hostname
       },
-      { for key, value in { backend_secret_arn = var.backend_secret_arn } : key => value if var.backend_image != "" },
+      { for key, value in { backend_secret_arn = var.backend_secret_arn } : key => value if var.backend_image != "" && value != "" },
     )))
     refresh_script  = base64gzip(file("${path.module}/refresh.py"))
     hostname        = local.hostname
