@@ -94,6 +94,15 @@ run "dedicated_network" {
   }
 
   assert {
+    # Compressed, so the user data stays under the EC2 limit of 16 KB.
+    condition = (
+      strcontains(aws_instance.server.user_data, "echo '${base64gzip(file("refresh.py"))}' | base64 -d | gunzip > /etc/evalve/refresh.py\n") &&
+      length(aws_instance.server.user_data) < 16384
+    )
+    error_message = "The server must get refresh.py compressed, and the user data must stay under 16 KB."
+  }
+
+  assert {
     condition = (
       output.url == "https://203-0-113-10.sslip.io" &&
       strcontains(aws_instance.server.user_data, "203-0-113-10.sslip.io {") &&

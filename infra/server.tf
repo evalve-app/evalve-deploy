@@ -81,7 +81,7 @@ resource "aws_instance" "server" {
       },
       { for key, value in { backend_secret_arn = var.backend_secret_arn } : key => value if var.backend_image != "" },
     )))
-    refresh_script  = filebase64("${path.module}/refresh.py")
+    refresh_script  = base64gzip(file("${path.module}/refresh.py"))
     hostname        = local.hostname
     public_ip       = aws_eip.server.public_ip
     kitaru_image    = var.server_image
