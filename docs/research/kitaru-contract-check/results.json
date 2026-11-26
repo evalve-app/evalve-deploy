@@ -1,0 +1,583 @@
+{
+  "kitaru_version": "0.27.6",
+  "server_version": "0.27.6",
+  "engine": "podman",
+  "started": "2026-11-26T03:01:48.151953+00:00",
+  "counts": {
+    "PASS": 23,
+    "FAIL": 0,
+    "INFO": 13
+  },
+  "results": [
+    {
+      "check": "image",
+      "fact": "`/usr/bin/timeout` is in the worker image",
+      "status": "PASS",
+      "detail": {
+        "version": "timeout (GNU coreutils) 9.1"
+      }
+    },
+    {
+      "check": "image",
+      "fact": "`find -writable` is in the worker image",
+      "status": "PASS",
+      "detail": {
+        "output": "/app",
+        "note": "In the bare worker image, uid 1000 owns /app, so /app is printed."
+      }
+    },
+    {
+      "check": "image",
+      "fact": "`/usr/local/bin/python3` is in the worker image",
+      "status": "PASS",
+      "detail": {
+        "version": "Python 3.13.18"
+      }
+    },
+    {
+      "check": "image",
+      "fact": "`/app/.venv/bin/kitaru worker start` in the bare worker image",
+      "status": "INFO",
+      "detail": {
+        "exit_code": 2,
+        "output": "Install the Kitaru CLI with `pip install 'kitaru[cli]'`."
+      }
+    },
+    {
+      "check": "image",
+      "fact": "`kitaru worker start` runs after `kitaru[cli,worker]` is installed in /app/.venv",
+      "status": "PASS",
+      "detail": {}
+    },
+    {
+      "check": "image",
+      "fact": "In the test agent image, `find /app -writable` prints nothing for uid 1000",
+      "status": "PASS",
+      "detail": {
+        "output": ""
+      }
+    },
+    {
+      "check": "token_mode",
+      "fact": "The lifetime of a worker token from `POST /api/v1/workers`",
+      "status": "INFO",
+      "detail": {
+        "seconds": 3600
+      }
+    },
+    {
+      "check": "token_mode",
+      "fact": "`/app/.venv/bin/kitaru worker start --timeout N` runs with `KITARU_API_URL`, `KITARU_WORKER_ID` and `KITARU_API_TOKEN` and no key",
+      "status": "PASS",
+      "detail": {
+        "key_or_credential_variables_in_the_container": "['GPG_KEY']",
+        "job": "job=completed agent:completed#1@01a215cd evaluator:completed#1@01a215cd evaluator:completed#1@01a215cd",
+        "worker_log_tail": [
+          "2026-11-26 03:02:32,996 kitaru.worker.task_runner INFO Task 01a215cd-dee6-70a0-9f31-225762a6c568 completed.",
+          "2026-11-26 03:02:32,997 httpx INFO HTTP Request: POST http://kcc-6f2a12-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\"",
+          "2026-11-26 03:02:33,015 httpx INFO HTTP Request: GET http://kcc-6f2a12-server:8000/api/v1/jobs/01a215cd-c2b2-7284-8776-136ff3bd5ecc \"HTTP/1.1 200 OK\"",
+          "2026-11-26 03:02:33,016 kitaru.worker.worker INFO Job 01a215cd-c2b2-7284-8776-136ff3bd5ecc settled as completed, ending the claim loop.",
+          "2026-11-26 03:02:33,017 kitaru.worker.worker INFO Worker kcc-01a215cd stopped.",
+          "{\"schema_version\":\"1\",\"command\":\"worker.start\",\"ok\":true,\"warnings\":[],\"links\":{},\"next_actions\":[],\"item\":{\"name\":null,\"id\":\"01a215cd-c3ad-7127-9b77-6636b87ca7e2\",\"concurrency\":10,\"claim_batch_size\":null,\"status\":\"stopped\",\"server_record\":\"retained_until_stale\",\"stop_reason\":\"completed\"},\"event\":\"stopped\"}"
+        ]
+      }
+    },
+    {
+      "check": "token_mode",
+      "fact": "The job-scoped worker claims the agent task and each evaluator task of its job",
+      "status": "PASS",
+      "detail": {
+        "tasks": "job=completed agent:completed#1@01a215cd evaluator:completed#1@01a215cd evaluator:completed#1@01a215cd"
+      }
+    },
+    {
+      "check": "token_mode",
+      "fact": "A job-scoped worker exits by itself with code 0 when its job ends",
+      "status": "PASS",
+      "detail": {
+        "exit_code": 0,
+        "seconds_from_last_task_end_to_exit": 0.37,
+        "seconds_from_start_to_exit": 16.24
+      }
+    },
+    {
+      "check": "token_mode",
+      "fact": "A worker in token mode gets the Kitaru secrets of the agent version",
+      "status": "PASS",
+      "detail": {
+        "secret_matches": true,
+        "run_spec_env": "plain-value"
+      }
+    },
+    {
+      "check": "token_mode",
+      "fact": "The agent process has a task token, and no key, worker ID or channel secret in its environment",
+      "status": "PASS",
+      "detail": {
+        "has_kitaru_api_key": false,
+        "has_worker_id": true,
+        "has_loop_task_secret": false,
+        "kitaru_and_evalve_names": [
+          "KCC_AGENT_ID",
+          "KCC_PLAIN",
+          "KCC_SECRET_VALUE",
+          "KITARU_API_TOKEN",
+          "KITARU_API_URL",
+          "KITARU_DISABLE_CLIENT_ANALYTICS",
+          "KITARU_REPLAY_ID",
+          "KITARU_TASK_ID",
+          "KITARU_TASK_INPUTS",
+          "KITARU_TASK_RESULT_PATH",
+          "KITARU_WORKER_BLOB_CACHE_ROOT",
+          "KITARU_WORKER_ID",
+          "KITARU_WORKER_PAYLOAD_CACHE_ROOT",
+          "UV_CACHE_DIR"
+        ]
+      }
+    },
+    {
+      "check": "token_mode",
+      "fact": "A judge with the provider `openai` and a connection schema gets `OPENAI_API_KEY` from a default connection, in a job-scoped worker that holds no key",
+      "status": "PASS",
+      "detail": {
+        "key_matches_the_connection": true,
+        "labels_of_the_judge_task": {
+          "kitaru/provider": "openai"
+        },
+        "plain_evaluator_has_the_key": false
+      }
+    },
+    {
+      "check": "token_mode",
+      "fact": "An evaluator with an inline dependency block (`openai==3.49.0`) installs and runs when root owns `/app`",
+      "status": "PASS",
+      "detail": {
+        "openai_version": "3.49.0",
+        "openai_file": "/tmp/evalve/cache/uv/archive-v0/uBIXcvURpqYYH4aD/lib/python3.13/site-packages/openai/__init__.py",
+        "uv_cache_dir": "/tmp/evalve/cache/uv",
+        "home": "/tmp/evalve/replays/01a215cd-c2b2-7284-8776-136ff3bd5ecc"
+      }
+    },
+    {
+      "check": "token_mode",
+      "fact": "The agent and the evaluators start when root owns all of `/app`, `.venv` included, with a source tree that cannot be written and a new `HOME` for each worker",
+      "status": "PASS",
+      "detail": {
+        "uid": 1000,
+        "agent_home": "/tmp/evalve/replays/01a215cd-c2b2-7284-8776-136ff3bd5ecc",
+        "agent_tmpdir": "/tmp/evalve/replays/01a215cd-c2b2-7284-8776-136ff3bd5ecc",
+        "agent_cwd": "/app",
+        "evaluator_home": "/tmp/evalve/replays/01a215cd-c2b2-7284-8776-136ff3bd5ecc",
+        "evaluator_cwd": "/tmp/evalve/replays/01a215cd-c2b2-7284-8776-136ff3bd5ecc",
+        "writes_in_the_source_tree": {
+          "/app": "EACCES",
+          "/app/agent": "EACCES",
+          "/app/.venv": "EACCES",
+          "/app/.venv/lib/python3.13/site-packages": "EACCES",
+          "/opt/kcc": "EACCES"
+        }
+      }
+    },
+    {
+      "check": "token_mode",
+      "fact": "Agent code can read the worker token from `/proc` of the worker",
+      "status": "PASS",
+      "detail": {
+        "ancestors": [
+          {
+            "comm": "sh",
+            "environ_readable": true,
+            "worker_id": "01a215cd-c3ad-7127-9b77-6636b87ca7e2"
+          },
+          {
+            "comm": "kitaru",
+            "environ_readable": true,
+            "worker_id": "01a215cd-c3ad-7127-9b77-6636b87ca7e2"
+          },
+          {
+            "comm": "python3",
+            "environ_readable": true,
+            "worker_id": null
+          }
+        ]
+      }
+    },
+    {
+      "check": "token_mode",
+      "fact": "Agent code can read the channel secret from `/proc` of the process that started the worker",
+      "status": "INFO",
+      "detail": {
+        "read": true
+      }
+    },
+    {
+      "check": "token_mode",
+      "fact": "`python -m kitaru.worker` with `KITARU_WORKER_TIMEOUT`, in token mode",
+      "status": "INFO",
+      "detail": {
+        "exit_code": 0,
+        "job": "job=completed agent:completed#1@01a215ce evaluator:completed#1@01a215ce evaluator:completed#1@01a215ce"
+      }
+    },
+    {
+      "check": "files_between_runs",
+      "fact": "The files of uid 1000 that stay after two Runs (the private directories are deleted, as the Supervisor does)",
+      "status": "INFO",
+      "detail": {
+        "files": {
+          "/tmp/kcc/\u2026": 9,
+          "/tmp/evalve/cache/kitaru-blobs/\u2026": 6,
+          "/tmp/evalve/cache/kitaru-payloads/\u2026": 4,
+          "/tmp/evalve/cache/uv/\u2026": 9806,
+          "/var/tmp/kcc-marker-01a215ce-4013-7064-b1ed-6818ff9bf1fd": 1,
+          "/var/tmp/kcc-marker-01a215ce-4013-7064-b1ed-6819a3c5b32b": 1,
+          "/var/tmp/kcc-marker-01a215ce-8dd4-76fa-b1fb-0170c6c283e1": 1,
+          "/var/tmp/kcc-marker-01a215ce-8dd4-76fa-b1fb-016f6d79490c": 1,
+          "/dev/shm/kcc-marker-01a215ce-8dd4-76fa-b1fb-016f6d79490c": 1,
+          "/dev/shm/kcc-marker-01a215ce-8dd4-76fa-b1fb-0170c6c283e1": 1,
+          "/dev/shm/kcc-marker-01a215ce-4013-7064-b1ed-6819a3c5b32b": 1,
+          "/dev/shm/kcc-marker-01a215ce-4013-7064-b1ed-6818ff9bf1fd": 1,
+          "/home/kitaru/.bash_logout": 1,
+          "/home/kitaru/.bashrc": 1,
+          "/home/kitaru/.profile": 1,
+          "/home/kitaru/kcc-marker-01a215ce-4013-7064-b1ed-6818ff9bf1fd": 1,
+          "/home/kitaru/kcc-marker-01a215ce-4013-7064-b1ed-6819a3c5b32b": 1,
+          "/home/kitaru/kcc-marker-01a215ce-8dd4-76fa-b1fb-0170c6c283e1": 1,
+          "/home/kitaru/kcc-marker-01a215ce-8dd4-76fa-b1fb-016f6d79490c": 1
+        }
+      }
+    },
+    {
+      "check": "files_between_runs",
+      "fact": "Marker files of an earlier Replay that a Replay of the second Run finds",
+      "status": "INFO",
+      "detail": {
+        "paths_with_markers": {
+          "/tmp": 3,
+          "/var/tmp": 3,
+          "/dev/shm": 3,
+          "/home/kitaru": 3,
+          "/tmp/evalve/cache/uv": 3,
+          "/tmp/evalve/cache/kitaru-blobs": 3,
+          "/tmp/evalve/cache/kitaru-payloads": 3
+        },
+        "places_agent_code_can_write": [
+          "/dev/shm",
+          "/home/kitaru",
+          "/tmp",
+          "/tmp/evalve/cache/kitaru-blobs",
+          "/tmp/evalve/cache/kitaru-payloads",
+          "/tmp/evalve/cache/uv",
+          "/tmp/evalve/replays/01a215ce-8dd4-76fa-b1fb-016da9bf4c70",
+          "/tmp/evalve/replays/01a215ce-8dd4-76fa-b1fb-016ec3a72799",
+          "/var/tmp"
+        ]
+      }
+    },
+    {
+      "check": "files_between_runs",
+      "fact": "No file stays in a private directory after its worker process exits",
+      "status": "PASS",
+      "detail": {
+        "left": []
+      }
+    },
+    {
+      "check": "files_between_runs",
+      "fact": "A Replay can list the private directories of the Replays that run at the same time (one uid)",
+      "status": "INFO",
+      "detail": {
+        "max_directories_visible": 2,
+        "example": [
+          "01a215ce-4013-7064-b1ed-6816d18d70b6",
+          "01a215ce-4013-7064-b1ed-6817ef3ce1c3",
+          "01a215ce-8dd4-76fa-b1fb-016da9bf4c70"
+        ]
+      }
+    },
+    {
+      "check": "uv_concurrency",
+      "fact": "10 `uv run` commands at the same time are safe on one cold uv cache (the command form of Kitaru)",
+      "status": "PASS",
+      "detail": {
+        "seconds": 22.5,
+        "exit_codes": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "errors": []
+      }
+    },
+    {
+      "check": "uv_concurrency",
+      "fact": "A Run with 10 jobs completes with 10 job-scoped workers in one container and one shared uv cache",
+      "status": "PASS",
+      "detail": {
+        "jobs": [
+          "completed",
+          "completed",
+          "completed",
+          "completed",
+          "completed",
+          "completed",
+          "completed",
+          "completed",
+          "completed",
+          "completed"
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "seconds": 47.3,
+        "failed_tasks": []
+      }
+    },
+    {
+      "check": "uv_concurrency",
+      "fact": "Peak memory of the container for the 10 workers (cgroup `memory.peak`, a local number, not Fargate)",
+      "status": "INFO",
+      "detail": {
+        "megabytes": 2153
+      }
+    },
+    {
+      "check": "sigterm",
+      "fact": "A worker that gets SIGTERM one time drains: the agent task completes and the agent gets no signal",
+      "status": "PASS",
+      "detail": {
+        "exit_code": 143,
+        "seconds_from_sigterm_to_exit": 19.6,
+        "job": "job=running agent:completed#1@01a215cf evaluator:pending#0@none evaluator:pending#0@none",
+        "agent_signals": [],
+        "worker_log_tail": [
+          "2026-11-26 03:04:59,438 httpx INFO HTTP Request: POST http://kcc-6f2a12-server:8000/api/v1/workers/01a215cf-e36b-713e-9629-a7fc3fd58406/heartbeat \"HTTP/1.1 200 OK\"",
+          "2026-11-26 03:05:02,123 httpx INFO HTTP Request: PATCH http://kcc-6f2a12-server:8000/api/v1/tasks/01a215cf-e32e-70cc-a9f8-9ef6450b15cf \"HTTP/1.1 200 OK\"",
+          "2026-11-26 03:05:02,125 kitaru.worker.task_runner INFO Task 01a215cf-e32e-70cc-a9f8-9ef6450b15cf completed.",
+          "2026-11-26 03:05:02,125 kitaru.worker.worker INFO Worker kcc-01a215cf stopped.",
+          "{\"schema_version\":\"1\",\"command\":\"worker.start\",\"ok\":true,\"warnings\":[],\"links\":{},\"next_actions\":[],\"item\":{\"name\":null,\"id\":\"01a215cf-e36b-713e-9629-a7fc3fd58406\",\"concurrency\":10,\"claim_batch_size\":null,\"status\":\"stopped\",\"server_record\":\"retained_until_stale\",\"stop_reason\":\"sigterm\"},\"event\":\"stopped\"}"
+        ]
+      }
+    },
+    {
+      "check": "sigterm",
+      "fact": "After a drain, the evaluator tasks of the job have no worker: the job stays `running`",
+      "status": "INFO",
+      "detail": {
+        "job": "running",
+        "evaluator_tasks": 2,
+        "pending": 2
+      }
+    },
+    {
+      "check": "sigterm",
+      "fact": "A worker that gets SIGTERM two times cancels its tasks and does not drain",
+      "status": "PASS",
+      "detail": {
+        "exit_code": 143,
+        "seconds_from_second_sigterm_to_exit": 0.6,
+        "agent_task": "canceled (None)",
+        "job_after": [
+          "   0.0s job=canceled agent:canceled#1@01a215d0"
+        ],
+        "signals_that_the_agent_process_got": "",
+        "worker_log_tail": [
+          "2026-11-26 03:05:10,891 kitaru.worker.worker INFO Draining 1 running task(s).",
+          "{\"schema_version\":\"1\",\"command\":\"worker.start\",\"ok\":true,\"event\":\"canceling\",\"item\":{\"reason\":\"sigterm\"}}",
+          "2026-11-26 03:05:13,242 kitaru.worker.task_runner INFO Task 01a215d0-4f72-762d-8f51-634def3c6d38 canceled by the server.",
+          "2026-11-26 03:05:13,291 httpx INFO HTTP Request: PATCH http://kcc-6f2a12-server:8000/api/v1/tasks/01a215d0-4f72-762d-8f51-634def3c6d38 \"HTTP/1.1 200 OK\"",
+          "2026-11-26 03:05:13,293 kitaru.worker.worker INFO Worker kcc-01a215d0 stopped.",
+          "{\"schema_version\":\"1\",\"command\":\"worker.start\",\"ok\":true,\"warnings\":[],\"links\":{},\"next_actions\":[],\"item\":{\"name\":null,\"id\":\"01a215d0-4fad-7492-9984-9500a6501bb7\",\"concurrency\":10,\"claim_batch_size\":null,\"status\":\"stopped\",\"server_record\":\"retained_until_stale\",\"stop_reason\":\"sigterm\"},\"event\":\"stopped\"}"
+        ]
+      }
+    },
+    {
+      "check": "timeout_entrypoint",
+      "fact": "`timeout` signals only its child, not the worker processes in their own sessions",
+      "status": "PASS",
+      "detail": {
+        "launcher_signals": [
+          "1795662344.688",
+          "SIGTERM"
+        ],
+        "worker_process_alive_20s_after_the_limit": "[True]",
+        "worker_log_tail_20s_after_the_limit": [
+          "2026-11-26 03:06:01,864 httpx INFO HTTP Request: POST http://kcc-6f2a12-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\"",
+          "2026-11-26 03:06:01,881 httpx INFO HTTP Request: GET http://kcc-6f2a12-server:8000/api/v1/jobs/01a215d0-7bb4-761a-92e2-47e7646c4b2a \"HTTP/1.1 200 OK\"",
+          "2026-11-26 03:06:03,916 httpx INFO HTTP Request: POST http://kcc-6f2a12-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\"",
+          "2026-11-26 03:06:03,933 httpx INFO HTTP Request: GET http://kcc-6f2a12-server:8000/api/v1/jobs/01a215d0-7bb4-761a-92e2-47e7646c4b2a \"HTTP/1.1 200 OK\""
+        ],
+        "agent_signals": "",
+        "job_20s_after_the_limit": "job=running agent:running#1@01a215d0",
+        "container_exit_code": 137,
+        "container_seconds": 60.4,
+        "job_after_the_container_exit": "job=running agent:running#1@01a215d0"
+      }
+    },
+    {
+      "check": "timeout_entrypoint",
+      "fact": "The 30 s of `timeout --kill-after=30`: the Supervisor sends SIGTERM one time, and the agent task needs more than 30 s",
+      "status": "INFO",
+      "detail": {
+        "launcher_signals": [
+          "1795662405.433",
+          "SIGTERM"
+        ],
+        "worker_process_alive_20s_after_the_limit": "[True]",
+        "worker_log_tail_20s_after_the_limit": [
+          "2026-11-26 03:06:45,433 kitaru.worker.worker INFO Stop requested, ending the claim loop.",
+          "2026-11-26 03:06:45,434 kitaru.worker.worker INFO Draining 1 running task(s).",
+          "2026-11-26 03:06:49,403 httpx INFO HTTP Request: POST http://kcc-6f2a12-server:8000/api/v1/workers/01a215d1-692f-7524-9db7-7c68d31a707d/heartbeat \"HTTP/1.1 200 OK\"",
+          "2026-11-26 03:06:59,444 httpx INFO HTTP Request: POST http://kcc-6f2a12-server:8000/api/v1/workers/01a215d1-692f-7524-9db7-7c68d31a707d/heartbeat \"HTTP/1.1 200 OK\""
+        ],
+        "agent_signals": "",
+        "job_20s_after_the_limit": "job=running agent:running#1@01a215d1",
+        "container_exit_code": 137,
+        "container_seconds": 60.5,
+        "job_after_the_container_exit": "job=running agent:running#1@01a215d1"
+      }
+    },
+    {
+      "check": "timeout_entrypoint",
+      "fact": "The 30 s of `timeout --kill-after=30`: the Supervisor sends SIGTERM one time, and the agent task ends in the 30 s",
+      "status": "INFO",
+      "detail": {
+        "launcher_signals": [
+          "1795662466.256",
+          "SIGTERM"
+        ],
+        "worker_process_alive_20s_after_the_limit": "[True]",
+        "worker_log_tail_20s_after_the_limit": [
+          "2026-11-26 03:07:46,256 kitaru.worker.worker INFO Stop requested, ending the claim loop.",
+          "2026-11-26 03:07:46,256 kitaru.worker.worker INFO Draining 1 running task(s).",
+          "2026-11-26 03:07:50,206 httpx INFO HTTP Request: POST http://kcc-6f2a12-server:8000/api/v1/workers/01a215d2-56bf-7486-be49-4f6ab2e0bab1/heartbeat \"HTTP/1.1 200 OK\"",
+          "2026-11-26 03:08:00,252 httpx INFO HTTP Request: POST http://kcc-6f2a12-server:8000/api/v1/workers/01a215d2-56bf-7486-be49-4f6ab2e0bab1/heartbeat \"HTTP/1.1 200 OK\""
+        ],
+        "agent_signals": "",
+        "job_20s_after_the_limit": "job=running agent:running#1@01a215d2",
+        "container_exit_code": 124,
+        "container_seconds": 52.4,
+        "job_after_the_container_exit": "job=running agent:completed#1@01a215d2 evaluator:pending#0@none evaluator:pending#0@none"
+      }
+    },
+    {
+      "check": "killed_worker",
+      "fact": "A task that a killed worker held goes back to `pending`, and its job stays `running`",
+      "status": "PASS",
+      "detail": {
+        "seconds_from_kill_to_pending": 63.7,
+        "timeline": [
+          "   0.0s job=running agent:running#1@01a215d3",
+          "  63.6s job=running agent:pending#1@none"
+        ]
+      }
+    },
+    {
+      "check": "killed_worker",
+      "fact": "With no worker, the task waits as `pending` (watched for 30 s)",
+      "status": "INFO",
+      "detail": {
+        "timeline": [
+          "   0.1s job=running agent:pending#1@none"
+        ]
+      }
+    },
+    {
+      "check": "killed_worker",
+      "fact": "A second start of a worker with the same worker ID and token claims the task again and completes the job",
+      "status": "PASS",
+      "detail": {
+        "exit_code": 0,
+        "job": "job=completed agent:completed#2@01a215d3 evaluator:completed#1@01a215d3 evaluator:completed#1@01a215d3",
+        "worker_log_head": [
+          "{\"schema_version\":\"1\",\"command\":\"worker.start\",\"ok\":true,\"event\":\"starting\",\"item\":{\"name\":null,\"id\":\"01a215d3-249d-76a5-9f5b-0e2fb14a83d6\",\"concurrency\":10,\"claim_batch_size\":null}}",
+          "2026-11-26 03:09:51,457 httpx INFO HTTP Request: GET http://kcc-6f2a12-server:8000/api/v1/workers/01a215d3-249d-76a5-9f5b-0e2fb14a83d6 \"HTTP/1.1 200 OK\"",
+          "2026-11-26 03:09:51,459 kitaru.worker.worker INFO Loaded worker kcc-01a215d3 (01a215d3-249d-76a5-9f5b-0e2fb14a83d6).",
+          "2026-11-26 03:09:51,514 httpx INFO HTTP Request: POST http://kcc-6f2a12-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\""
+        ]
+      }
+    },
+    {
+      "check": "killed_worker",
+      "fact": "Two workers on one worker ID at the same time: the job completes and the agent task runs one time",
+      "status": "PASS",
+      "detail": {
+        "timeline": [
+          "   0.1s job=running agent:running#1@01a215d4",
+          " 103.3s job=running agent:completed#1@01a215d4 evaluator:running#1@01a215d4 evaluator:running#1@01a215d4",
+          " 106.4s job=running agent:completed#1@01a215d4 evaluator:completed#1@01a215d4 evaluator:running#1@01a215d4",
+          " 111.7s job=completed agent:completed#1@01a215d4 evaluator:completed#1@01a215d4 evaluator:completed#1@01a215d4"
+        ],
+        "exit_codes": [
+          0,
+          0
+        ],
+        "first_worker_log_tail": [
+          "2026-11-26 03:12:04,304 httpx INFO HTTP Request: POST http://kcc-6f2a12-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\"",
+          "2026-11-26 03:12:04,320 httpx INFO HTTP Request: GET http://kcc-6f2a12-server:8000/api/v1/jobs/01a215d4-f17f-74ca-b315-c97b69f9fb9c \"HTTP/1.1 200 OK\"",
+          "2026-11-26 03:12:04,321 kitaru.worker.worker INFO Job 01a215d4-f17f-74ca-b315-c97b69f9fb9c settled as completed, ending the claim loop.",
+          "2026-11-26 03:12:04,321 kitaru.worker.worker INFO Worker kcc-01a215d4 stopped.",
+          "{\"schema_version\":\"1\",\"command\":\"worker.start\",\"ok\":true,\"warnings\":[],\"links\":{},\"next_actions\":[],\"item\":{\"name\":null,\"id\":\"01a215d4-f1b8-70fc-9228-b8b99bc57ca8\",\"concurrency\":10,\"claim_batch_size\":null,\"status\":\"stopped\",\"server_record\":\"retained_until_stale\",\"stop_reason\":\"completed\"},\"event\":\"stopped\"}"
+        ],
+        "second_worker_log_tail": [
+          "2026-11-26 03:12:04,776 httpx INFO HTTP Request: POST http://kcc-6f2a12-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\"",
+          "2026-11-26 03:12:04,793 httpx INFO HTTP Request: GET http://kcc-6f2a12-server:8000/api/v1/jobs/01a215d4-f17f-74ca-b315-c97b69f9fb9c \"HTTP/1.1 200 OK\"",
+          "2026-11-26 03:12:04,794 kitaru.worker.worker INFO Job 01a215d4-f17f-74ca-b315-c97b69f9fb9c settled as completed, ending the claim loop.",
+          "2026-11-26 03:12:04,795 kitaru.worker.worker INFO Worker kcc-01a215d4 stopped.",
+          "{\"schema_version\":\"1\",\"command\":\"worker.start\",\"ok\":true,\"warnings\":[],\"links\":{},\"next_actions\":[],\"item\":{\"name\":null,\"id\":\"01a215d4-f1b8-70fc-9228-b8b99bc57ca8\",\"concurrency\":10,\"claim_batch_size\":null,\"status\":\"stopped\",\"server_record\":\"retained_until_stale\",\"stop_reason\":\"completed\"},\"event\":\"stopped\"}"
+        ]
+      }
+    },
+    {
+      "check": "token_expiry",
+      "fact": "A worker token that expires after 40 s, while the worker holds an agent task of 100 s",
+      "status": "INFO",
+      "detail": {
+        "token_lifetime_seconds": 40,
+        "timeline": [
+          "   0.0s job=pending agent:pending#0@none",
+          "   4.2s job=running agent:running#1@01a215d6",
+          " 100.0s job=running agent:pending#1@none"
+        ],
+        "job_at_the_end": "job=running agent:pending#1@none",
+        "agent_session_recorded": false,
+        "evaluations_recorded": [],
+        "worker_exit_code": -9,
+        "worker_seconds": 330.6,
+        "worker_killed_by_the_check": true,
+        "worker_log": [
+          "2026-11-26 03:12:47,958 httpx INFO HTTP Request: POST http://kcc-6f2a12-server:8000/api/v1/tasks/claim \"HTTP/1.1 401 Unauthorized\"",
+          "2026-11-26 03:12:47,960 kitaru.worker.worker WARNING Failed to claim tasks: 401: Invalid bearer credential.",
+          "2026-11-26 03:12:49,971 httpx INFO HTTP Request: POST http://kcc-6f2a12-server:8000/api/v1/tasks/claim \"HTTP/1.1 401 Unauthorized\"",
+          "2026-11-26 03:12:49,973 kitaru.worker.worker WARNING Failed to claim tasks: 401: Invalid bearer credential.",
+          "2026-11-26 03:12:51,021 httpx INFO HTTP Request: POST http://kcc-6f2a12-server:8000/api/v1/workers/01a215d6-c66e-75a3-a5ba-a18426ed8e95/heartbeat \"HTTP/1.1 401 Unauthorized\"",
+          "2026-11-26 03:12:51,022 kitaru.worker.heartbeat WARNING Heartbeat failed: 401: Invalid bearer credential.",
+          "2026-11-26 03:12:53,985 httpx INFO HTTP Request: POST http://kcc-6f2a12-server:8000/api/v1/tasks/claim \"HTTP/1.1 401 Unauthorized\"",
+          "2026-11-26 03:12:53,986 kitaru.worker.worker WARNING Failed to claim tasks: 401: Invalid bearer credential."
+        ],
+        "worker_log_tail": [
+          "2026-11-26 03:15:50,092 httpx INFO HTTP Request: POST http://kcc-6f2a12-server:8000/api/v1/tasks/claim \"HTTP/1.1 401 Unauthorized\"",
+          "2026-11-26 03:15:50,093 kitaru.worker.worker WARNING Failed to claim tasks: 401: Invalid bearer credential.",
+          "2026-11-26 03:16:50,116 httpx INFO HTTP Request: POST http://kcc-6f2a12-server:8000/api/v1/tasks/claim \"HTTP/1.1 401 Unauthorized\"",
+          "2026-11-26 03:16:50,117 kitaru.worker.worker WARNING Failed to claim tasks: 401: Invalid bearer credential."
+        ]
+      }
+    }
+  ]
+}
