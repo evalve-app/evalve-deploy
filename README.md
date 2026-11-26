@@ -75,7 +75,7 @@ Caddy sends `https://<hostname>/evalve/*` to the backend. `start` waits until `/
 
 The backend logs in as its own role, `evalve`, which can't reach Kitaru's database (ADR 0005). Before each start, the server runs `setup-database` with the master login to create the role and set its password from the secret `evalve/backend`. `journalctl -u evalve-backend` on the server shows what it did.
 
-The first `up` after this version replaces EC2 once on a deployment with a backend. The URL and the RDS data stay.
+The first `up` after this version replaces EC2 once on every deployment, including those without a backend. Expect a brief outage. The URL and the RDS data stay.
 
 ## Upgrade the backend or the dashboard
 
