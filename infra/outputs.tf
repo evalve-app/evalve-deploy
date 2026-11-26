@@ -17,6 +17,24 @@ output "deployment" {
     server_image               = var.server_image
     backend_image              = var.backend_image
     backend_image_pinned       = var.backend_image_pinned
+    loop_task_egress_ports     = var.loop_task_egress_ports
     snapshot_id                = var.snapshot_id
   }
+}
+
+# Where a Loop task runs and where an agent image goes. Null with no backend.
+output "loop_task_subnet_id" {
+  value = local.loop_task_enabled ? aws_subnet.server.id : null
+}
+
+output "loop_task_security_group_id" {
+  value = one(aws_security_group.loop_task[*].id)
+}
+
+output "agent_image_repository_url" {
+  value = local.loop_task_enabled ? local.agent_image_repository_url : null
+}
+
+output "agent_image_push_role_arn" {
+  value = one(aws_iam_role.agent_image_push[*].arn)
 }

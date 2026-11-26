@@ -325,3 +325,250 @@ run "restore_keeps_database_private_and_pins_application_secret" {
     error_message = "Restoration must use the saved snapshot and credential version, with a private, protected RDS instance."
   }
 }
+
+run "loop_task_security_group_allows_only_https_egress_by_default" {
+  command = apply
+
+  variables {
+    backend_image = "ghcr.io/evalve-app/evalve-backend@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+
+  assert {
+    condition = (
+      length(aws_security_group.loop_task) == 1 &&
+      startswith(aws_security_group.loop_task[0].name_prefix, "evalve-loop-task-") &&
+      aws_security_group.loop_task[0].vpc_id == aws_vpc.main.id
+    )
+    error_message = "With a backend, the Loop task must have its own security group in the Evalve VPC."
+  }
+
+  assert {
+    condition = alltrue([
+      for rule in concat(values(aws_vpc_security_group_ingress_rule.web), [aws_vpc_security_group_ingress_rule.postgres]) :
+      rule.security_group_id != aws_security_group.loop_task[0].id
+    ])
+    error_message = "The security group of the Loop task must have no ingress rule."
+  }
+
+  assert {
+    condition = (
+      length(aws_vpc_security_group_egress_rule.loop_task) == 1 &&
+      alltrue([
+        for rule in aws_vpc_security_group_egress_rule.loop_task :
+        rule.security_group_id == aws_security_group.loop_task[0].id &&
+        rule.cidr_ipv4 == "0.0.0.0/0" && rule.ip_protocol == "tcp" &&
+        rule.from_port == 443 && rule.to_port == 443
+      ])
+    )
+    error_message = "By default, the only egress of the Loop task is TCP 443 to any address."
+  }
+
+  assert {
+    condition = alltrue([
+      for rule in concat(
+        values(aws_vpc_security_group_ingress_rule.web),
+        [
+          aws_vpc_security_group_ingress_rule.postgres,
+          aws_vpc_security_group_egress_rule.https,
+          aws_vpc_security_group_egress_rule.postgres,
+        ],
+      ) : rule.referenced_security_group_id != aws_security_group.loop_task[0].id
+    ])
+    error_message = "No rule of a different security group may name the security group of the Loop task."
+  }
+
+  assert {
+    # The two asserts above name each rule. A new rule resource must be added to them.
+    condition = toset(flatten([
+      for name in fileset(path.module, "*.tf") :
+      regexall("resource \"aws_vpc_security_group_(?:in|e)gress_rule\" \"[a-z_]+\"", file("${path.module}/${name}"))
+      ])) == toset([
+      "resource \"aws_vpc_security_group_ingress_rule\" \"web\"",
+      "resource \"aws_vpc_security_group_ingress_rule\" \"postgres\"",
+      "resource \"aws_vpc_security_group_egress_rule\" \"https\"",
+      "resource \"aws_vpc_security_group_egress_rule\" \"postgres\"",
+      "resource \"aws_vpc_security_group_egress_rule\" \"loop_task\"",
+    ]) && length(regexall("(?m)^\\s*(?:in|e)gress\\s*[{=]", join("\n", [for name in fileset(path.module, "*.tf") : file("${path.module}/${name}")]))) == 0
+    error_message = "A security group rule was added or removed. Check it against the Loop task asserts in this run, then update this list."
+  }
+}
+
+run "loop_task_egress_ports_add_one_rule_each" {
+  command = apply
+
+  variables {
+    backend_image          = "ghcr.io/evalve-app/evalve-backend@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    loop_task_egress_ports = [5432]
+  }
+
+  assert {
+    condition = (
+      length(aws_vpc_security_group_egress_rule.loop_task) == 2 &&
+      toset([for rule in aws_vpc_security_group_egress_rule.loop_task : rule.from_port]) == toset([443, 5432]) &&
+      alltrue([
+        for rule in aws_vpc_security_group_egress_rule.loop_task :
+        rule.from_port == rule.to_port && rule.ip_protocol == "tcp" && rule.cidr_ipv4 == "0.0.0.0/0"
+      ])
+    )
+    error_message = "Each port of loop_task_egress_ports must add one TCP egress rule to any address."
+  }
+
+  assert {
+    condition     = output.deployment.loop_task_egress_ports == tolist([5432])
+    error_message = "The extra ports must be recorded in deployment state so down and restore keep them."
+  }
+}
+
+run "reject_loop_task_port_443" {
+  command = plan
+
+  variables {
+    loop_task_egress_ports = [443]
+  }
+
+  expect_failures = [var.loop_task_egress_ports]
+}
+
+run "reject_loop_task_port_zero" {
+  command = plan
+
+  variables {
+    loop_task_egress_ports = [0]
+  }
+
+  expect_failures = [var.loop_task_egress_ports]
+}
+
+run "reject_loop_task_port_above_65535" {
+  command = plan
+
+  variables {
+    loop_task_egress_ports = [70000]
+  }
+
+  expect_failures = [var.loop_task_egress_ports]
+}
+
+run "reject_loop_task_port_that_is_not_whole" {
+  command = plan
+
+  variables {
+    loop_task_egress_ports = [5432.5]
+  }
+
+  expect_failures = [var.loop_task_egress_ports]
+}
+
+run "agent_image_push_role_can_only_push_to_the_one_repository" {
+  command = apply
+
+  variables {
+    backend_image = "ghcr.io/evalve-app/evalve-backend@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+
+  assert {
+    condition = (
+      length(aws_iam_role.agent_image_push) == 1 &&
+      startswith(aws_iam_role.agent_image_push[0].name_prefix, "evalve-agent-image-push-")
+    )
+    error_message = "With a backend, the deployment must have the push-only role."
+  }
+
+  assert {
+    condition = (
+      length(jsondecode(aws_iam_role.agent_image_push[0].assume_role_policy).Statement) == 1 &&
+      jsondecode(aws_iam_role.agent_image_push[0].assume_role_policy).Statement[0] == {
+        Effect    = "Allow"
+        Principal = { AWS = aws_iam_role.server.arn }
+        Action    = "sts:AssumeRole"
+      }
+    )
+    error_message = "Only the instance role may assume the push-only role."
+  }
+
+  assert {
+    condition = (
+      length(aws_iam_role_policy.agent_image_push) == 1 &&
+      aws_iam_role_policy.agent_image_push[0].role == aws_iam_role.agent_image_push[0].name &&
+      jsondecode(aws_iam_role_policy.agent_image_push[0].policy).Statement == [
+        {
+          Effect   = "Allow"
+          Action   = "ecr:GetAuthorizationToken"
+          Resource = "*"
+        },
+        {
+          Effect = "Allow"
+          Action = [
+            "ecr:InitiateLayerUpload",
+            "ecr:UploadLayerPart",
+            "ecr:CompleteLayerUpload",
+            "ecr:BatchCheckLayerAvailability",
+            "ecr:PutImage",
+            "ecr:BatchGetImage",
+          ]
+          Resource = "arn:aws:ecr:us-east-1:123456789012:repository/evalve-agent-images"
+        },
+      ]
+    )
+    error_message = "The push-only role may get a token, and push to and read evalve-agent-images of this account and region. Nothing else."
+  }
+
+  assert {
+    condition     = !strcontains(lower(aws_iam_role_policy.agent_image_push[0].policy), "delete")
+    error_message = "The push-only role must have no delete action."
+  }
+
+  assert {
+    condition = alltrue([
+      for name in fileset(path.module, "*.tf") : !strcontains(file("${path.module}/${name}"), "aws_ecr_repository")
+    ])
+    error_message = "Terraform must not manage the agent image repository. The CLI makes it, so that it stays after down."
+  }
+
+  assert {
+    condition = (
+      output.loop_task_subnet_id == aws_subnet.server.id &&
+      output.loop_task_security_group_id == aws_security_group.loop_task[0].id &&
+      output.agent_image_repository_url == "123456789012.dkr.ecr.us-east-1.amazonaws.com/evalve-agent-images" &&
+      output.agent_image_push_role_arn == aws_iam_role.agent_image_push[0].arn
+    )
+    error_message = "With a backend, the deployment must output where a Loop task runs and where an agent image goes."
+  }
+}
+
+run "no_backend_has_no_loop_task_resources" {
+  command = apply
+
+  assert {
+    condition = (
+      length(aws_security_group.loop_task) == 0 &&
+      length(aws_vpc_security_group_egress_rule.loop_task) == 0 &&
+      length(aws_iam_role.agent_image_push) == 0 &&
+      length(aws_iam_role_policy.agent_image_push) == 0
+    )
+    error_message = "Without backend_image, none of the Loop task resources may exist."
+  }
+
+  assert {
+    condition = (
+      output.loop_task_subnet_id == null &&
+      output.loop_task_security_group_id == null &&
+      output.agent_image_repository_url == null &&
+      output.agent_image_push_role_arn == null
+    )
+    error_message = "Without backend_image, the four Loop task outputs must be null."
+  }
+}
+
+run "no_backend_ignores_saved_loop_task_ports" {
+  command = apply
+
+  variables {
+    loop_task_egress_ports = [5432]
+  }
+
+  assert {
+    condition     = length(aws_vpc_security_group_egress_rule.loop_task) == 0 && output.deployment.loop_task_egress_ports == tolist([5432])
+    error_message = "Without backend_image, saved ports make no rule, and they stay in deployment state."
+  }
+}

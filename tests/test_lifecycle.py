@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import DEFAULT, Mock, patch
 
 from evalve import EvalveError, backup, cli, lifecycle, power, terraform
 from evalve.aws import STATE_KEY
@@ -410,6 +410,20 @@ class ShutdownTest(unittest.TestCase):
         self.assertEqual(manifests[0]["configuration"]["backend_image"], image)
         self.assertTrue(manifests[0]["configuration"]["backend_image_pinned"])
 
+    def test_loop_task_ports_are_saved_for_restore(self):
+        deployment = self.documents[STATE_KEY]["outputs"]["deployment"]
+        deployment["value"] = dict(CONFIG, loop_task_egress_ports=[5432])
+        self.invoke()
+        manifests = [
+            document
+            for key, document in self.documents.items()
+            if key.startswith("evalve/snapshots/")
+        ]
+        self.assertEqual(len(manifests), 1)
+        self.assertEqual(
+            manifests[0]["configuration"]["loop_task_egress_ports"], [5432]
+        )
+
 
 class RestoreTest(unittest.TestCase):
     def test_restore_cli_passes_saved_configuration_and_retains_checkpoint_until_ready(
@@ -430,6 +444,7 @@ class RestoreTest(unittest.TestCase):
                     database_engine_version="16.12",
                     backend_image="ghcr.io/evalve-app/evalve-backend@sha256:" + "0" * 64,
                     backend_image_pinned=True,
+                    loop_task_egress_ports=[5432],
                 )
                 with (
                     patch.object(cli, "check_tools"),
@@ -457,6 +472,12 @@ class RestoreTest(unittest.TestCase):
                             "dashboard_url": "https://dashboard.example.sslip.io",
                             "instance_id": INSTANCE,
                         },
+                        # A restore needs the repository of the agent images
+                        # before Terraform runs.
+                        side_effect=lambda *a: (
+                            aws.ensure_agent_image_repository.assert_called_once_with(),
+                            DEFAULT,
+                        )[1],
                     ) as apply,
                     patch.object(
                         cli,
@@ -486,6 +507,7 @@ class RestoreTest(unittest.TestCase):
                 self.assertIsNone(variables["domain"])
                 self.assertEqual(variables["backend_image"], result["backend_image"])
                 self.assertTrue(variables["backend_image_pinned"])
+                self.assertEqual(variables["loop_task_egress_ports"], [5432])
                 if failing != "kitaru":
                     # The restored server gets the saved image from up.
                     deploy.assert_called_once_with(aws, INSTANCE, result["backend_image"])

@@ -96,3 +96,27 @@ resource "aws_vpc_security_group_ingress_rule" "postgres" {
   from_port                    = 5432
   to_port                      = 5432
 }
+
+# The Loop task (ADR 0006 point 13) exists only when the deployment has a
+# backend. It calls Kitaru and the backend at the public hostname, so it needs
+# no rule in the security groups of the server and the database.
+locals {
+  loop_task_enabled      = var.backend_image != ""
+  loop_task_egress_ports = local.loop_task_enabled ? toset([for port in concat([443], var.loop_task_egress_ports) : tostring(port)]) : toset([])
+}
+
+resource "aws_security_group" "loop_task" {
+  count       = local.loop_task_enabled ? 1 : 0
+  name_prefix = "evalve-loop-task-"
+  description = "Loop tasks: no ingress, egress on HTTPS and the ports the Operator sets"
+  vpc_id      = aws_vpc.main.id
+}
+
+resource "aws_vpc_security_group_egress_rule" "loop_task" {
+  for_each          = local.loop_task_egress_ports
+  security_group_id = aws_security_group.loop_task[0].id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "tcp"
+  from_port         = tonumber(each.key)
+  to_port           = tonumber(each.key)
+}

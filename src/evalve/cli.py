@@ -12,7 +12,7 @@ import sys
 from decimal import Decimal
 
 from evalve import EvalveError, lifecycle, power, terraform
-from evalve.aws import Aws, read_application_secret
+from evalve.aws import AGENT_IMAGE_REPOSITORY, Aws, read_application_secret
 from evalve.readiness import wait_for_backend, wait_for_dashboard, wait_for_kitaru
 
 # Bump this to the digest of each evalve-backend release. Deployments that
@@ -75,6 +75,20 @@ def choose_backend(flag: str | None, existing: dict) -> tuple[str, bool]:
         # because that replaces EC2.
         return saved, pinned
     return DEFAULT_BACKEND_IMAGE, False
+
+
+def loop_task_port(value: str) -> int:
+    message = (
+        "A Loop task port must be a whole number from 1 to 65535, "
+        "and not 443, which is always open."
+    )
+    try:
+        port = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(message) from exc
+    if not 1 <= port <= 65535 or port == 443:
+        raise argparse.ArgumentTypeError(message)
+    return port
 
 
 def backup_retention_days(value: str) -> int:
@@ -144,6 +158,22 @@ def parser() -> argparse.ArgumentParser:
         type=backend_image,
         help="Evalve backend image digest to pin. Without the flag, up uses the repo "
         'default. Pass "default" to follow the repo again, or "" to remove the backend.',
+    )
+    ports = up.add_mutually_exclusive_group()
+    ports.add_argument(
+        "--loop-task-port",
+        type=loop_task_port,
+        action="append",
+        metavar="PORT",
+        help="Extra TCP port that a Loop task can reach, such as 5432 for a database "
+        "of the agent. Repeat the flag for more ports. The flags replace the saved "
+        "list. Port 443 is always open.",
+    )
+    ports.add_argument(
+        "--no-loop-task-ports",
+        action="store_true",
+        help="Remove the extra ports of the Loop task. Without either flag, up keeps "
+        "the saved list.",
     )
     up.add_argument(
         "--monthly-estimate",
@@ -250,6 +280,18 @@ def up(args: argparse.Namespace) -> None:
         backend, pinned = choose_backend(args.backend_image, existing)
         print(f"Evalve backend: {backend or 'none'}{' (pinned)' if pinned else ''}")
         print(f"Evalve dashboard: {DEFAULT_DASHBOARD_URL}")
+        if args.no_loop_task_ports:
+            task_ports = []
+        elif args.loop_task_port:
+            task_ports = list(dict.fromkeys(args.loop_task_port))
+        else:
+            task_ports = existing.get("loop_task_egress_ports", [])
+        if backend:
+            print(
+                "Loop task egress: TCP "
+                + ", ".join(str(port) for port in [443, *task_ports])
+                + f" | Agent images: ECR repository {AGENT_IMAGE_REPOSITORY}"
+            )
         if outputs.get("instance_id") and not args.restore:
             if bool(backend) != bool(saved_backend):
                 print(
@@ -280,6 +322,13 @@ def up(args: argparse.Namespace) -> None:
 
         aws.ensure_bucket()
         secret = aws.ensure_application_secret(existing.get("application_secret_arn"))
+        tags_are_immutable = not backend or aws.ensure_agent_image_repository()
+        if not tags_are_immutable:
+            print(
+                f"Warning: ECR repository {AGENT_IMAGE_REPOSITORY} has mutable tags. "
+                "Evalve does not change an existing repository. Set its tags to "
+                "immutable so that a pushed agent image cannot be replaced."
+            )
         restore_etag = (
             lifecycle.record_restore(aws, args.restore, operation)
             if args.restore
@@ -303,6 +352,7 @@ def up(args: argparse.Namespace) -> None:
                 },
                 "backend_image": backend,
                 "backend_image_pinned": pinned,
+                "loop_task_egress_ports": task_ports,
             },
         )
         url = outputs["url"]
