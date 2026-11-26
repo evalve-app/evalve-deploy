@@ -63,14 +63,20 @@ resource "aws_instance" "server" {
   iam_instance_profile        = aws_iam_instance_profile.server.name
   user_data_replace_on_change = true
   user_data = templatefile("${path.module}/bootstrap.sh.tftpl", {
-    config = base64encode(jsonencode({
-      region                     = var.region
-      application_secret_arn     = var.application_secret_arn
-      application_secret_version = var.application_secret_version
-      database_secret_arn        = aws_db_instance.main.master_user_secret[0].secret_arn
-      database_host              = aws_db_instance.main.address
-      hostname                   = local.hostname
-    }))
+    # The Backend secret has no version, so the server always reads its newest
+    # password (ADR 0005 point 4). It is in the config only with a backend, so
+    # a deployment without one keeps the same user data and the same EC2.
+    config = base64encode(jsonencode(merge(
+      {
+        region                     = var.region
+        application_secret_arn     = var.application_secret_arn
+        application_secret_version = var.application_secret_version
+        database_secret_arn        = aws_db_instance.main.master_user_secret[0].secret_arn
+        database_host              = aws_db_instance.main.address
+        hostname                   = local.hostname
+      },
+      { for key, value in { backend_secret_arn = var.backend_secret_arn } : key => value if var.backend_image != "" },
+    )))
     refresh_script  = filebase64("${path.module}/refresh.py")
     hostname        = local.hostname
     public_ip       = aws_eip.server.public_ip
