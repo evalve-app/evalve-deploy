@@ -32,6 +32,10 @@ ROOT = "/tmp/evalve"
 # them. Code of a Replay can write them, and the sweep empties them.
 RUNTIME_DIRECTORIES = ("/dev/shm", "/dev/mqueue")
 PROC = "/proc"
+# Each worker process gets its job ID in this variable, and each process of its
+# Replay inherits it. Thus the Supervisor finds the processes of one Replay,
+# also a process that left the session of the worker.
+JOB_VARIABLE = "EVALVE_JOB_ID"
 
 POLL_TIMEOUT_SECONDS = 10
 # A worker process that still runs this long after the Run deadline is killed.
@@ -41,6 +45,9 @@ DEADLINE_GRACE_SECONDS = 30
 DRAIN_SECONDS = 100
 # How long the Supervisor waits for a process that it killed.
 REAP_SECONDS = 5
+# How many times a kill looks for the processes of a Replay. A process can
+# start a new one while the Supervisor reads `/proc`.
+KILL_PASSES = 3
 # The longest sleep between two looks at the worker processes.
 TICK_SECONDS = 1
 
@@ -229,6 +236,31 @@ def processes_of_session(proc_path, session):
     """Select each process of one session."""
     table = read_processes(proc_path)
     return sorted(pid for pid, (_, its_session) in table.items() if its_session == session)
+
+
+def processes_with_variable(proc_path, name, value):
+    """Select each process that has this variable with this value in its environment.
+
+    It reads the `environ` files. It cannot read the file of a process of a
+    different user, and it leaves out that process.
+    """
+    entry = f"{name}={value}".encode()
+    found = []
+    try:
+        names = os.listdir(proc_path)
+    except OSError:
+        return found
+    for item in names:
+        if not item.isdigit():
+            continue
+        try:
+            with open(os.path.join(proc_path, item, "environ"), "rb") as handle:
+                variables = handle.read().split(b"\0")
+        except OSError:
+            continue
+        if entry in variables:
+            found.append(int(item))
+    return sorted(found)
 
 
 def send_kill(pids):
@@ -448,6 +480,7 @@ class Supervisor:
             KITARU_API_URL=self.settings.kitaru_api_url,
             KITARU_WORKER_ID=assignment.worker_id,
             KITARU_API_TOKEN=assignment.worker_token,
+            **{JOB_VARIABLE: assignment.job_id},
             HOME=directory,
             TMPDIR=directory,
             UV_CACHE_DIR=os.path.join(cache, "uv"),
@@ -463,7 +496,7 @@ class Supervisor:
             code = worker.process.poll()
             if code is None:
                 continue
-            self._kill_session(worker)  # what is left of its session
+            self._kill_replay(worker)  # each process of the Replay that is left
             self._delete(worker.directory)
             del self.workers[worker.job_id]
             self.log(
@@ -478,12 +511,23 @@ class Supervisor:
         for worker in self.workers.values():
             if not worker.killed and now >= worker.deadline + DEADLINE_GRACE_SECONDS:
                 self.log("worker_deadline", job_id=worker.job_id)
-                self._kill_session(worker)
+                self._kill_replay(worker)
 
-    def _kill_session(self, worker):
+    def _kill_replay(self, worker):
+        """Send SIGKILL to each process of the Replay of a worker process.
+
+        Kitaru starts the agent in its own session, so the session of the worker
+        is not sufficient. A process with no job ID in its environment stays
+        until the sweep.
+        """
         worker.killed = True
         pid = worker.process.pid
-        send_kill(processes_of_session(self.proc_path, pid))
+        for _ in range(KILL_PASSES):
+            found = set(processes_with_variable(self.proc_path, JOB_VARIABLE, worker.job_id))
+            found.update(processes_of_session(self.proc_path, pid))
+            found.discard(os.getpid())
+            if not send_kill(sorted(found)):
+                break
         try:
             # The worker process leads its session and its process group.
             os.killpg(pid, signal.SIGKILL)
@@ -493,7 +537,7 @@ class Supervisor:
     def _kill_workers(self):
         """Send SIGKILL to each worker process, and wait for its end."""
         for worker in self.workers.values():
-            self._kill_session(worker)
+            self._kill_replay(worker)
         for worker in self.workers.values():
             try:
                 worker.process.wait(timeout=REAP_SECONDS)

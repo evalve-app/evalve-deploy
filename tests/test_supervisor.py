@@ -3,8 +3,8 @@
 Each case has a fake backend (`http.server`), a fake `kitaru` program and a
 clock that the test controls. The path of the worker command, the directory
 `/tmp/evalve`, the two directories that the sweep empties and `/proc` are
-parameters, so the tests use temporary ones. No test reads the real `/proc`,
-and no test sends a signal to a process that the test did not start.
+parameters, so the tests use temporary ones. No test does the sweep on the real
+`/proc`, and no test sends a signal to a process that the test did not start.
 """
 
 import ast
@@ -40,6 +40,8 @@ START = 1_800_000_000.0
 #   ignore   never exit
 #   exit:N   exit at once with code N
 #   child    start a child process in the same session, then exit 0
+#   detach   start a child process in a session of its own, then exit 0
+#   detach-ignore   start a child process in a session of its own, then never exit
 FAKE_KITARU = r"""
 import json, os, signal, subprocess, sys, time
 
@@ -69,6 +71,13 @@ record = {"argv": sys.argv[1:], "cwd": os.getcwd(), "env": dict(os.environ),
           "pid": os.getpid(), "sid": os.getsid(0)}
 if plan == "child":
     record["child"] = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"]).pid
+if plan.startswith("detach"):
+    # As Kitaru starts the agent: in a session of its own, with the environment of the worker.
+    detached = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True
+    )
+    record["detached"] = detached.pid
+    record["detached_sid"] = os.getsid(detached.pid)
 with open(path(".starts"), "a") as handle:
     handle.write("start\n")
 with open(path(".tmp"), "w") as handle:
@@ -76,7 +85,7 @@ with open(path(".tmp"), "w") as handle:
 os.replace(path(".tmp"), path(".json"))
 if plan.startswith("exit:"):
     sys.exit(int(plan[5:]))
-if plan == "child":
+if plan in ("child", "detach"):
     sys.exit(0)
 while True:
     released = os.path.exists(path(".release"))
@@ -266,6 +275,12 @@ class SupervisorCase(unittest.TestCase):
     def starts(self, job):
         return len(self.lines(job, ".starts"))
 
+    def write_environ(self, pid, **variables):
+        """Put the environment of a process in the fake `/proc`."""
+        os.makedirs(os.path.join(self.proc, str(pid)), exist_ok=True)
+        with open(os.path.join(self.proc, str(pid), "environ"), "wb") as handle:
+            handle.write(b"".join(f"{name}={value}\0".encode() for name, value in variables.items()))
+
     def events(self, name=None):
         events = [json.loads(line) for line in self.out.getvalue().splitlines()]
         return [event for event in events if name in (None, event["event"])]
@@ -380,6 +395,7 @@ class WorkerTest(SupervisorCase):
             "KITARU_API_URL": "https://kitaru.example.com",
             "KITARU_WORKER_ID": "worker-a",
             "KITARU_API_TOKEN": "token-of-a",
+            "EVALVE_JOB_ID": "a",
             "HOME": directory,
             "TMPDIR": directory,
             "UV_CACHE_DIR": os.path.join(self.root, "cache", "uv"),
@@ -449,6 +465,32 @@ class WorkerTest(SupervisorCase):
         self.assertTrue(alive(child))
         self.step_until_exit(item, "a")
         until(lambda: not alive(child))
+
+    def test_an_exit_kills_a_process_of_the_replay_that_left_the_session(self):
+        self.plan("a", "detach")
+        self.assign("a")
+        item = self.supervisor()
+        item.step()
+        record = self.record("a")
+        detached = record["detached"]
+        self.assertNotEqual(record["detached_sid"], record["sid"])
+        # In the real `/proc`, the process has the job ID of its Replay in its environment.
+        self.write_environ(detached, HOME=record["cwd"], EVALVE_JOB_ID="a")
+        self.assertTrue(alive(detached))
+        self.step_until_exit(item, "a")
+        until(lambda: not alive(detached))
+
+    def test_the_kill_at_the_deadline_also_kills_a_process_that_left_the_session(self):
+        self.plan("a", "detach-ignore")
+        self.assign("a", deadline=100)
+        item = self.supervisor()
+        item.step()
+        record = self.record("a")
+        self.write_environ(record["detached"], EVALVE_JOB_ID="a")
+        self.after(item, 130)
+        self.step_until_exit(item, "a")
+        until(lambda: not alive(record["detached"]))
+        self.assertFalse(alive(record["pid"]))
 
     def test_a_worker_that_runs_30_s_after_the_run_deadline_is_killed(self):
         self.plan("a", "ignore")
@@ -590,6 +632,29 @@ class SweepTest(SupervisorCase):
         os.makedirs(os.path.join(self.proc, str(pid)))
         with open(os.path.join(self.proc, str(pid), "stat"), "w") as handle:
             handle.write(f"{pid} ({name}) S {parent} {pid} {session} 0 -1 4194560 0 0\n")
+
+    def test_the_selection_by_the_job_id_reads_the_environment_of_each_process(self):
+        self.write_environ(30, EVALVE_JOB_ID="a", HOME="/x")
+        self.write_environ(31, HOME="/x", EVALVE_JOB_ID="a")
+        self.write_environ(32, EVALVE_JOB_ID="ab")
+        self.write_environ(33, OTHER_EVALVE_JOB_ID="a", NOTE="EVALVE_JOB_ID=a")
+        os.makedirs(os.path.join(self.proc, "34"))  # a process of a different user
+        os.makedirs(os.path.join(self.proc, "self"))
+        self.assertEqual(supervisor.processes_with_variable(self.proc, "EVALVE_JOB_ID", "a"), [30, 31])
+        self.assertEqual(supervisor.processes_with_variable(self.proc, "EVALVE_JOB_ID", "b"), [])
+
+    @unittest.skipUnless(os.path.isdir("/proc/self"), "This test reads the real /proc of Linux.")
+    def test_the_selection_by_the_job_id_finds_a_process_in_its_own_session(self):
+        job = f"job-{os.getpid()}-{time.monotonic_ns()}"
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            env={**os.environ, "EVALVE_JOB_ID": job}, start_new_session=True,
+        )  # fmt: skip
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        select = supervisor.processes_with_variable
+        until(lambda: select("/proc", "EVALVE_JOB_ID", job) == [child.pid])
+        self.assertEqual(select("/proc", "EVALVE_JOB_ID", job + "x"), [])
 
     def test_the_selection_leaves_out_the_supervisor_and_each_process_above_it(self):
         self.write_stat(1, parent=0, session=1, name="docker-init")
