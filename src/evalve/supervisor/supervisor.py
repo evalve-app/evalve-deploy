@@ -1,9 +1,14 @@
-"""The Supervisor: the main process of a Loop task.
+"""The Supervisor: runs the Replays of a Loop task.
 
 It polls the Evalve backend for its Assignments and runs one Kitaru worker
 process for each Replay. In an agent image this file is
 `/opt/evalve/supervisor.py`, and the system Python runs it. It imports only the
 standard library, and nothing from `evalve` or `kitaru`.
+
+The container must run a separate init process: enable
+`linuxParameters.initProcessEnabled` in ECS, or use `docker run --init`.
+Init reaps orphaned Replay descendants. The Supervisor waits for its direct
+worker processes through Popen; it is not an implementation of PID 1.
 
 The design is ADR 0006 point 13, parts "Claim", "Life" and "Isolation".
 """
