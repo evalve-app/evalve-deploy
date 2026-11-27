@@ -634,6 +634,88 @@ run "agent_image_push_role_can_only_push_to_the_one_repository" {
   }
 }
 
+run "loop_task_cluster_execution_role_and_log_group" {
+  command = apply
+
+  variables {
+    backend_image = "ghcr.io/evalve-app/evalve-backend@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+
+  assert {
+    condition = (
+      length(aws_ecs_cluster.evalve) == 1 &&
+      aws_ecs_cluster.evalve[0].name == "evalve" &&
+      [for setting in aws_ecs_cluster.evalve[0].setting : setting if setting.name == "containerInsights"] == [{ name = "containerInsights", value = "disabled" }]
+    )
+    error_message = "With a backend, the deployment must have the ECS cluster evalve, with Container Insights off."
+  }
+
+  assert {
+    condition = (
+      length(aws_cloudwatch_log_group.loop_task) == 1 &&
+      aws_cloudwatch_log_group.loop_task[0].name == "/evalve/loop-task" &&
+      aws_cloudwatch_log_group.loop_task[0].retention_in_days == 7
+    )
+    error_message = "With a backend, Terraform must make the log group /evalve/loop-task, with a retention of 7 days."
+  }
+
+  assert {
+    condition = (
+      length(aws_iam_role.loop_task_execution) == 1 &&
+      startswith(aws_iam_role.loop_task_execution[0].name_prefix, "evalve-loop-task-execution-") &&
+      jsondecode(aws_iam_role.loop_task_execution[0].assume_role_policy).Statement == [{
+        Effect    = "Allow"
+        Principal = { Service = "ecs-tasks.amazonaws.com" }
+        Action    = "sts:AssumeRole"
+      }]
+    )
+    error_message = "With a backend, only ecs-tasks.amazonaws.com may assume the execution role of the Loop task."
+  }
+
+  assert {
+    condition = (
+      length(aws_iam_role_policy_attachment.loop_task_execution) == 1 &&
+      aws_iam_role_policy_attachment.loop_task_execution[0].role == aws_iam_role.loop_task_execution[0].name &&
+      aws_iam_role_policy_attachment.loop_task_execution[0].policy_arn == "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy" &&
+      alltrue([
+        for role in concat([aws_iam_role_policy_attachment.ssm.role, aws_iam_role_policy.secrets.role], aws_iam_role_policy.agent_image_push[*].role) :
+        role != aws_iam_role.loop_task_execution[0].name
+      ])
+    )
+    error_message = "The execution role must have AmazonECSTaskExecutionRolePolicy and no other policy."
+  }
+
+  assert {
+    # The assert above names each policy resource. A new one must be added to it.
+    condition = toset(flatten([
+      for name in fileset(path.module, "*.tf") :
+      regexall("resource \"aws_iam_(?:role_polic[a-z_]*|policy_attachment)\" \"[a-z_]+\"", file("${path.module}/${name}"))
+      ])) == toset([
+      "resource \"aws_iam_role_policy_attachment\" \"ssm\"",
+      "resource \"aws_iam_role_policy\" \"secrets\"",
+      "resource \"aws_iam_role_policy\" \"agent_image_push\"",
+      "resource \"aws_iam_role_policy_attachment\" \"loop_task_execution\"",
+    ]) && length(regexall("(?m)^\\s*(?:managed_policy_arns|inline_policy)\\s*[{=]", join("\n", [for name in fileset(path.module, "*.tf") : file("${path.module}/${name}")]))) == 0
+    error_message = "An IAM policy resource was added or removed. Check it against the execution role assert in this run, then update this list."
+  }
+
+  assert {
+    condition = alltrue([
+      for name in fileset(path.module, "*.tf") : !strcontains(file("${path.module}/${name}"), "aws_ecs_task_definition")
+    ])
+    error_message = "Terraform must not manage a task definition. The backend registers one for each agent image."
+  }
+
+  assert {
+    condition = (
+      output.ecs_cluster_name == "evalve" &&
+      output.loop_task_execution_role_arn == aws_iam_role.loop_task_execution[0].arn &&
+      output.loop_task_log_group == "/evalve/loop-task"
+    )
+    error_message = "With a backend, the deployment must output the cluster, the execution role and the log group of the Loop task."
+  }
+}
+
 run "no_backend_has_no_loop_task_resources" {
   command = apply
 
@@ -642,7 +724,11 @@ run "no_backend_has_no_loop_task_resources" {
       length(aws_security_group.loop_task) == 0 &&
       length(aws_vpc_security_group_egress_rule.loop_task) == 0 &&
       length(aws_iam_role.agent_image_push) == 0 &&
-      length(aws_iam_role_policy.agent_image_push) == 0
+      length(aws_iam_role_policy.agent_image_push) == 0 &&
+      length(aws_ecs_cluster.evalve) == 0 &&
+      length(aws_iam_role.loop_task_execution) == 0 &&
+      length(aws_iam_role_policy_attachment.loop_task_execution) == 0 &&
+      length(aws_cloudwatch_log_group.loop_task) == 0
     )
     error_message = "Without backend_image, none of the Loop task resources may exist."
   }
@@ -652,9 +738,12 @@ run "no_backend_has_no_loop_task_resources" {
       output.loop_task_subnet_id == null &&
       output.loop_task_security_group_id == null &&
       output.agent_image_repository_url == null &&
-      output.agent_image_push_role_arn == null
+      output.agent_image_push_role_arn == null &&
+      output.ecs_cluster_name == null &&
+      output.loop_task_execution_role_arn == null &&
+      output.loop_task_log_group == null
     )
-    error_message = "Without backend_image, the four Loop task outputs must be null."
+    error_message = "Without backend_image, the seven Loop task outputs must be null."
   }
 }
 

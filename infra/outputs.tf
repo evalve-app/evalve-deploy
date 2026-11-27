@@ -39,3 +39,17 @@ output "agent_image_repository_url" {
 output "agent_image_push_role_arn" {
   value = one(aws_iam_role.agent_image_push[*].arn)
 }
+
+# The cluster, the execution role and the log group of the Loop tasks. Null with
+# no backend.
+output "ecs_cluster_name" {
+  value = one(aws_ecs_cluster.evalve[*].name)
+}
+
+output "loop_task_execution_role_arn" {
+  value = one(aws_iam_role.loop_task_execution[*].arn)
+}
+
+output "loop_task_log_group" {
+  value = one(aws_cloudwatch_log_group.loop_task[*].name)
+}
