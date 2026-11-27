@@ -1,0 +1,22 @@
+Kitaru 0.27.6, engine docker
+Pulling docker.io/library/postgres:16-alpine ...
+Pulling docker.io/zenmldocker/kitaru-server:0.27.6 ...
+Pulling docker.io/zenmldocker/kitaru-worker:0.27.6 ...
+Building localhost/kcc-agent:0.27.6 ...
+Starting the stack kcc-b28107 ...
+
+== files_between_runs: Two Runs in one container: which files of the first Run does the second see?
+  [INFO] The files of uid 1000 that stay after two Runs (the private directories are deleted, as the Supervisor does)
+         files: {"/tmp/kcc/\u2026": 9, "/tmp/evalve/cache/kitaru-payloads/\u2026": 4, "/tmp/evalve/cache/uv/\u2026": 9851, "/tmp/evalve/cache/kitaru-blobs/\u2026": 6, "/var/tmp/kcc-marker-01a21e84-79e2-73fd-b594-c8e77b17c0ae": 1, "/var/tmp/kcc-marker-01a21e84-5d84-743f-8b15-8109b9485867": 1, "/var/tmp/kcc-marker-01a21e84-5d84-743f-8b15-81085b3f78b5": 1, "/var/tmp/kcc-marker-01a21e84-79e2-73fd-b594-c8e634178e01": 1, "/dev/shm/kcc-marker-01a21e84-79e2-73fd-b594-c8e634178e01": 1, "/dev/shm/kcc-marker-01a21e84-79e2-73fd-b594-c8e77b17c0ae": 1, "/dev/shm/kcc-marker-01a21e84-5d84-743f-8b15-8109b9485867": 1, "/dev/sh
+  [INFO] Marker files of an earlier Replay that a Replay of the second Run finds
+         paths_with_markers: {"/tmp": 3, "/var/tmp": 3, "/dev/shm": 3, "/home/kitaru": 3, "/tmp/evalve/cache/uv": 3, "/tmp/evalve/cache/kitaru-blobs": 3, "/tmp/evalve/cache/kitaru-payloads": 3}
+         places_agent_code_can_write: ["/dev/shm", "/home/kitaru", "/tmp", "/tmp/evalve/cache/kitaru-blobs", "/tmp/evalve/cache/kitaru-payloads", "/tmp/evalve/cache/uv", "/tmp/evalve/replays/01a21e84-79e2-73fd-b594-c8e47632f57a", "/tmp/evalve/replays/01a21e84-79e2-73fd-b594-c8e50a2b3a00", "/var/tmp"]
+  [PASS] No file stays in a private directory after its worker process exits
+         left: []
+  [INFO] A Replay can list the private directories of the Replays that run at the same time (one uid)
+         max_directories_visible: 2
+         example: ["01a21e84-5d84-743f-8b15-8106d816c4f0", "01a21e84-5d84-743f-8b15-810750b2cb90", "01a21e84-79e2-73fd-b594-c8e47632f57a"]
+
+Kept the stack kcc-b28107 (http://127.0.0.1:61639). Remove: docker rm -f $(docker ps -aq --filter name=kcc-b28107)
+
+1 PASS, 0 FAIL, 3 INFO

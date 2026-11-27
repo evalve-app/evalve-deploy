@@ -1,0 +1,22 @@
+Kitaru 0.27.6, engine docker
+Pulling docker.io/library/postgres:16-alpine ...
+Pulling docker.io/zenmldocker/kitaru-server:0.27.6 ...
+Pulling docker.io/zenmldocker/kitaru-worker:0.27.6 ...
+Building localhost/kcc-agent:0.27.6 ...
+Starting the stack kcc-87c609 ...
+
+== files_between_runs: Two Runs in one container: which files of the first Run does the second see?
+  [INFO] The files of uid 1000 that stay after two Runs (the private directories are deleted, as the Supervisor does)
+         files: {"/tmp/evalve/cache/kitaru-payloads/\u2026": 4, "/tmp/evalve/cache/uv/\u2026": 9851, "/tmp/evalve/cache/kitaru-blobs/\u2026": 6, "/tmp/evalve/kcc/\u2026": 5, "/dev/shm/kcc-marker-01a21e87-c187-774d-94cb-097e2edd0e9a": 1, "/dev/shm/kcc-marker-01a21e87-c187-774d-94cb-097dcf656935": 1, "/dev/shm/kcc-marker-01a21e87-99b5-718a-b143-2a94a4abeb24": 1, "/dev/shm/kcc-marker-01a21e87-99b5-718a-b143-2a956e43b6d7": 1}
+  [INFO] Marker files of an earlier Replay that a Replay of the second Run finds
+         paths_with_markers: {"/dev/shm": 2, "/tmp/evalve/cache/uv": 2, "/tmp/evalve/cache/kitaru-blobs": 2, "/tmp/evalve/cache/kitaru-payloads": 2}
+         places_agent_code_can_write: ["/dev/shm", "/tmp/evalve/cache/kitaru-blobs", "/tmp/evalve/cache/kitaru-payloads", "/tmp/evalve/cache/uv", "/tmp/evalve/replays/01a21e87-c187-774d-94cb-097bc68b8613", "/tmp/evalve/replays/01a21e87-c187-774d-94cb-097c4f9a1122"]
+  [PASS] No file stays in a private directory after its worker process exits
+         left: []
+  [INFO] A Replay can list the private directories of the Replays that run at the same time (one uid)
+         max_directories_visible: 2
+         example: ["01a21e87-99b5-718a-b143-2a928a5c2940", "01a21e87-99b5-718a-b143-2a939c46a730", "01a21e87-c187-774d-94cb-097bc68b8613"]
+
+Kept the stack kcc-87c609 (http://127.0.0.1:62535). Remove: docker rm -f $(docker ps -aq --filter name=kcc-87c609)
+
+1 PASS, 0 FAIL, 3 INFO

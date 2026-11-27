@@ -1,0 +1,56 @@
+Kitaru 0.27.6, engine docker
+Pulling docker.io/library/postgres:16-alpine ...
+Pulling docker.io/zenmldocker/kitaru-server:0.27.6 ...
+Pulling docker.io/zenmldocker/kitaru-worker:0.27.6 ...
+Building localhost/kcc-agent:0.27.6 ...
+Starting the stack kcc-d38b35 ...
+
+== token_mode: One job, one job-scoped worker in token mode: the main path of a Replay.
+  [INFO] The lifetime of a worker token from `POST /api/v1/workers`
+         seconds: 3600
+  [PASS] `/app/.venv/bin/kitaru worker start --timeout N` runs with `KITARU_API_URL`, `KITARU_WORKER_ID` and `KITARU_API_TOKEN` and no key
+         key_or_credential_variables_in_the_container: ['GPG_KEY']
+         job: job=completed agent:completed#1@01a21e85 evaluator:completed#1@01a21e85 evaluator:completed#1@01a21e85
+         worker_log_tail: ["2026-11-27 19:39:42,693 kitaru.worker.task_runner INFO Task 01a21e85-3e07-72b4-8bf2-882a136f657b completed.", "2026-11-27 19:39:44,038 httpx INFO HTTP Request: POST http://kcc-d38b35-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\"", "2026-11-27 19:39:44,045 httpx INFO HTTP Request: GET http://kcc-d38b35-server:8000/api/v1/jobs/01a21e85-38ce-742b-b9c7-e104db8bfaad \"HTTP/1.1 200 OK\"", "2026-11-27 19:39:44,046 kitaru.worker.worker INFO Job 01a21e85-38ce-742b-b9c7-e104db8bfaad settled as completed, ending the claim loop.", "2026-11-27 19:39:44,046 kitaru.worker.worker INFO Worker kcc-01a21e
+  [PASS] The job-scoped worker claims the agent task and each evaluator task of its job
+         tasks: job=completed agent:completed#1@01a21e85 evaluator:completed#1@01a21e85 evaluator:completed#1@01a21e85
+  [PASS] A job-scoped worker exits by itself with code 0 when its job ends
+         exit_code: 0
+         seconds_from_last_task_end_to_exit: 1.44
+         seconds_from_start_to_exit: 6.8
+  [PASS] A worker in token mode gets the Kitaru secrets of the agent version
+         secret_matches: true
+         run_spec_env: plain-value
+  [PASS] The agent process has a task token, and no key, worker ID or channel secret in its environment
+         has_kitaru_api_key: false
+         has_worker_id: true
+         has_loop_task_secret: false
+         kitaru_and_evalve_names: ["KCC_AGENT_ID", "KCC_PLAIN", "KCC_SECRET_VALUE", "KITARU_API_TOKEN", "KITARU_API_URL", "KITARU_DISABLE_CLIENT_ANALYTICS", "KITARU_REPLAY_ID", "KITARU_TASK_ID", "KITARU_TASK_INPUTS", "KITARU_TASK_RESULT_PATH", "KITARU_WORKER_BLOB_CACHE_ROOT", "KITARU_WORKER_ID", "KITARU_WORKER_PAYLOAD_CACHE_ROOT", "UV_CACHE_DIR"]
+  [PASS] A judge with the provider `openai` and a connection schema gets `OPENAI_API_KEY` from a default connection, in a job-scoped worker that holds no key
+         key_matches_the_connection: true
+         labels_of_the_judge_task: {"kitaru/provider": "openai"}
+         plain_evaluator_has_the_key: false
+  [PASS] An evaluator with an inline dependency block (`openai==3.49.0`) installs and runs when root owns `/app`
+         openai_version: 3.49.0
+         openai_file: /tmp/evalve/cache/uv/archive-v0/7jRInnGmACvWkWte/lib/python3.13/site-packages/openai/__init__.py
+         uv_cache_dir: /tmp/evalve/cache/uv
+         home: /tmp/evalve/replays/01a21e85-38ce-742b-b9c7-e104db8bfaad
+  [PASS] The agent and the evaluators start when root owns all of `/app`, `.venv` included, with a source tree that cannot be written and a new `HOME` for each worker
+         uid: 1000
+         agent_home: /tmp/evalve/replays/01a21e85-38ce-742b-b9c7-e104db8bfaad
+         agent_tmpdir: /tmp/evalve/replays/01a21e85-38ce-742b-b9c7-e104db8bfaad
+         agent_cwd: /app
+         evaluator_home: /tmp/evalve/replays/01a21e85-38ce-742b-b9c7-e104db8bfaad
+         evaluator_cwd: /tmp/evalve/replays/01a21e85-38ce-742b-b9c7-e104db8bfaad
+         writes_in_the_source_tree: {"/app": "EACCES", "/app/agent": "EACCES", "/app/.venv": "EACCES", "/app/.venv/lib/python3.13/site-packages": "EACCES", "/opt/kcc": "EACCES"}
+  [PASS] Agent code can read the worker token from `/proc` of the worker
+         ancestors: [{"comm": "sh", "environ_readable": true, "worker_id": "01a21e85-38f5-753b-816c-fe02e9e54781"}, {"comm": "kitaru", "environ_readable": true, "worker_id": "01a21e85-38f5-753b-816c-fe02e9e54781"}, {"comm": "python3", "environ_readable": true, "worker_id": null}]
+  [INFO] Agent code can read the channel secret from `/proc` of the process that started the worker
+         read: true
+  [INFO] `python -m kitaru.worker` with `KITARU_WORKER_TIMEOUT`, in token mode
+         exit_code: 0
+         job: job=completed agent:completed#1@01a21e85 evaluator:completed#1@01a21e85 evaluator:completed#1@01a21e85
+
+Kept the stack kcc-d38b35 (http://127.0.0.1:62041). Remove: docker rm -f $(docker ps -aq --filter name=kcc-d38b35)
+
+9 PASS, 0 FAIL, 3 INFO

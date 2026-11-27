@@ -1,0 +1,23 @@
+Kitaru 0.27.6, engine docker
+Pulling docker.io/library/postgres:16-alpine ...
+Pulling docker.io/zenmldocker/kitaru-server:0.27.6 ...
+Pulling docker.io/zenmldocker/kitaru-worker:0.27.6 ...
+Building localhost/kcc-agent:0.27.6 ...
+Starting the stack kcc-780e48 ...
+
+== uv_concurrency: 10 Replays at the same time on one cold uv cache.
+  [PASS] 10 `uv run` commands at the same time are safe on one cold uv cache (the command form of Kitaru)
+         seconds: 5.2
+         exit_codes: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+         errors: []
+  [PASS] A Run with 10 jobs completes with 10 job-scoped workers in one container and one shared uv cache
+         jobs: ["completed", "completed", "completed", "completed", "completed", "completed", "completed", "completed", "completed", "completed"]
+         exit_codes: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+         seconds: 10.0
+         failed_tasks: []
+  [INFO] Peak memory of the container for the 10 workers (cgroup `memory.peak`, a local number, not Fargate)
+         megabytes: 3714
+
+Kept the stack kcc-780e48 (http://127.0.0.1:63085). Remove: docker rm -f $(docker ps -aq --filter name=kcc-780e48)
+
+2 PASS, 0 FAIL, 1 INFO

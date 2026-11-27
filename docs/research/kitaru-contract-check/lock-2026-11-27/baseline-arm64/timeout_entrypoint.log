@@ -1,0 +1,35 @@
+Kitaru 0.27.6, engine docker
+Building localhost/kcc-agent:0.27.6 ...
+Starting the stack kcc-5efbc4 ...
+
+== timeout_entrypoint: `timeout --kill-after=30 N` as the entrypoint, and its 30 s.
+  [PASS] `timeout` signals only its child, not the worker processes in their own sessions
+         launcher_signals: ["1795810919.372", "SIGTERM"]
+         worker_process_alive_20s_after_the_limit: [True]
+         worker_log_tail_20s_after_the_limit: ["2026-11-27 20:22:16,658 httpx INFO HTTP Request: POST http://kcc-5efbc4-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\"", "2026-11-27 20:22:16,667 httpx INFO HTTP Request: GET http://kcc-5efbc4-server:8000/api/v1/jobs/01a21eab-8e1c-7689-96b3-952e309574b9 \"HTTP/1.1 200 OK\"", "2026-11-27 20:22:18,690 httpx INFO HTTP Request: POST http://kcc-5efbc4-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\"", "2026-11-27 20:22:18,698 httpx INFO HTTP Request: GET http://kcc-5efbc4-server:8000/api/v1/jobs/01a21eab-8e1c-7689-96b3-952e309574b9 \"HTTP/1.1 200 OK\""]
+         agent_signals: 
+         job_20s_after_the_limit: job=running agent:running#1@01a21eab
+         container_exit_code: 137
+         container_seconds: 60.2
+         job_after_the_container_exit: job=running agent:running#1@01a21eab
+  [INFO] The 30 s of `timeout --kill-after=30`: the Supervisor sends SIGTERM one time, and the agent task needs more than 30 s
+         launcher_signals: ["1795810979.617", "SIGTERM"]
+         worker_process_alive_20s_after_the_limit: [True]
+         worker_log_tail_20s_after_the_limit: ["2026-11-27 20:22:59,618 kitaru.worker.worker INFO Stop requested, ending the claim loop.", "2026-11-27 20:22:59,618 kitaru.worker.worker INFO Draining 1 running task(s).", "2026-11-27 20:23:00,285 httpx INFO HTTP Request: POST http://kcc-5efbc4-server:8000/api/v1/workers/01a21eac-799c-76e4-ab95-9312b38df1ad/heartbeat \"HTTP/1.1 200 OK\"", "2026-11-27 20:23:10,307 httpx INFO HTTP Request: POST http://kcc-5efbc4-server:8000/api/v1/workers/01a21eac-799c-76e4-ab95-9312b38df1ad/heartbeat \"HTTP/1.1 200 OK\""]
+         agent_signals: 
+         job_20s_after_the_limit: job=running agent:running#1@01a21eac
+         container_exit_code: 137
+         container_seconds: 60.2
+         job_after_the_container_exit: job=running agent:running#1@01a21eac
+  [INFO] The 30 s of `timeout --kill-after=30`: the Supervisor sends SIGTERM one time, and the agent task ends in the 30 s
+         launcher_signals: []
+         worker_process_alive_20s_after_the_limit: 
+         worker_log_tail_20s_after_the_limit: []
+         agent_signals: 
+         job_20s_after_the_limit: job=running agent:completed#1@01a21ead evaluator:pending#0@none evaluator:pending#0@none
+         container_exit_code: 124
+         container_seconds: 50.1
+         job_after_the_container_exit: job=running agent:completed#1@01a21ead evaluator:pending#0@none evaluator:pending#0@none
+
+1 PASS, 0 FAIL, 2 INFO
+exit=0

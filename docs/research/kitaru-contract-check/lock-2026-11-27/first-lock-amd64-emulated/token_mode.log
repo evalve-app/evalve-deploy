@@ -1,0 +1,25 @@
+Kitaru 0.27.6, engine docker
+Pulling docker.io/library/postgres:16-alpine ...
+Pulling docker.io/zenmldocker/kitaru-server:0.27.6 ...
+Pulling docker.io/zenmldocker/kitaru-worker:0.27.6 ...
+Building localhost/kcc-agent:0.27.6 ...
+Starting the stack kcc-bdea60 ...
+
+== token_mode: One job, one job-scoped worker in token mode: the main path of a Replay.
+  [INFO] The lifetime of a worker token from `POST /api/v1/workers`
+         seconds: 3600
+  [FAIL] `/app/.venv/bin/kitaru worker start --timeout N` runs with `KITARU_API_URL`, `KITARU_WORKER_ID` and `KITARU_API_TOKEN` and no key
+         key_or_credential_variables_in_the_container: ['GPG_KEY']
+         job: job=failed agent:failed#1@01a21e81
+         worker_log_tail: ["2026-11-27 19:35:19,330 httpx INFO HTTP Request: PATCH http://kcc-bdea60-server:8000/api/v1/tasks/01a21e81-40f3-73df-9848-13359b5e469e \"HTTP/1.1 200 OK\"", "2026-11-27 19:35:20,652 httpx INFO HTTP Request: POST http://kcc-bdea60-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\"", "2026-11-27 19:35:20,662 httpx INFO HTTP Request: GET http://kcc-bdea60-server:8000/api/v1/jobs/01a21e81-40f3-73df-9848-1333782a6c26 \"HTTP/1.1 200 OK\"", "2026-11-27 19:35:20,663 kitaru.worker.worker INFO Job 01a21e81-40f3-73df-9848-1333782a6c26 settled as failed, ending the claim loop.", "2026-11-27 19:35:20,663
+  [FAIL] The job-scoped worker claims the agent task and each evaluator task of its job
+         tasks: job=failed agent:failed#1@01a21e81
+  [PASS] A job-scoped worker exits by itself with code 0 when its job ends
+         exit_code: 0
+         seconds_from_last_task_end_to_exit: 1.43
+         seconds_from_start_to_exit: 3.22
+  [FAIL] The probe agent recorded a session
+
+Kept the stack kcc-bdea60 (http://127.0.0.1:61295). Remove: docker rm -f $(docker ps -aq --filter name=kcc-bdea60)
+
+1 PASS, 3 FAIL, 1 INFO

@@ -1,0 +1,22 @@
+Kitaru 0.27.6, engine docker
+Pulling docker.io/library/postgres:16-alpine ...
+Pulling docker.io/zenmldocker/kitaru-server:0.27.6 ...
+Pulling docker.io/zenmldocker/kitaru-worker:0.27.6 ...
+Building localhost/kcc-agent:0.27.6 ...
+Starting the stack kcc-d82b55 ...
+
+== files_between_runs: Two Runs in one container: which files of the first Run does the second see?
+  [INFO] The files of uid 1000 that stay after two Runs (the private directories are deleted, as the Supervisor does)
+         files: {"/tmp/evalve/kcc/\u2026": 5}
+  [INFO] Marker files of an earlier Replay that a Replay of the second Run finds
+         paths_with_markers: {}
+         places_agent_code_can_write: []
+  [PASS] No file stays in a private directory after its worker process exits
+         left: []
+  [INFO] A Replay can list the private directories of the Replays that run at the same time (one uid)
+         max_directories_visible: 0
+         example: []
+
+Kept the stack kcc-d82b55 (http://127.0.0.1:61326). Remove: docker rm -f $(docker ps -aq --filter name=kcc-d82b55)
+
+1 PASS, 0 FAIL, 3 INFO

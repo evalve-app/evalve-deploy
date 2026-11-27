@@ -1,0 +1,39 @@
+file syscalls parsed: 49971
+by program (comm): {'python': 31950, 'kitaru': 5671, 'python3': 4740, 'main2': 4246, 'tokio-rt-worker': 2780, 'python3.13': 498, 'uv-cache-read': 70, 'sh': 14, 'strace': 2}
+
+(a) file syscalls that failed with EACCES/EPERM/EROFS: 22
+      3  python         faccessat [W_OK]                             /app  -> EACCES
+      2  python         openat [O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC]  /app/.venv/kcc-marker-<uuid>  -> EACCES
+      2  python         openat [O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC]  /app/.venv/lib/python3.13/site-packages/kcc-marker-<uuid>  -> EACCES
+      2  python         openat [O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC]  /app/agent/kcc-marker-<uuid>  -> EACCES
+      4  python         openat [O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC]  /app/kcc-marker-<uuid>  -> EACCES
+      2  python         openat [O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC]  /home/kitaru/kcc-marker-<uuid>  -> EACCES
+      2  python         openat [O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC]  /opt/kcc/kcc-marker-<uuid>  -> EACCES
+      2  python         openat [O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC]  /tmp/kcc-marker-<uuid>  -> EACCES
+      2  python         openat [O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC]  /var/tmp/kcc-marker-<uuid>  -> EACCES
+      1  python3        faccessat [W_OK]                             /app  -> EACCES
+
+(b) file syscalls on a path in ('/tmp', '/var/tmp', '/dev/shm', '/dev/mqueue', '/home/kitaru', '/run/lock', '/var/lock', '/root') and not under /tmp/evalve: 53
+      1  kitaru         execve                                       /home/kitaru/.local/bin/uv  -> ENOENT
+      4  main2          newfstatat                                   /tmp/pyproject.toml  -> ENOENT
+      2  main2          openat                                       /tmp/pyproject.toml  -> ENOENT
+      2  main2          openat                                       /tmp/uv.toml  -> ENOENT
+      8  main2          readlinkat                                   /tmp  -> EINVAL
+      1  python         execve                                       /home/kitaru/.local/bin/uv  -> ENOENT
+      2  python         mkdirat                                      /dev/shm  -> EEXIST
+      2  python         mkdirat                                      /home/kitaru  -> EEXIST
+      2  python         mkdirat                                      /tmp  -> EEXIST
+      2  python         mkdirat                                      /var/tmp  -> EEXIST
+      2  python         newfstatat                                   /dev/shm  -> ok
+      2  python         newfstatat                                   /home/kitaru  -> ok
+      4  python         newfstatat                                   /tmp  -> ok
+      2  python         newfstatat                                   /var/tmp  -> ok
+      2  python         openat                                       /dev/shm  -> ok
+      2  python         openat                                       /home/kitaru  -> ok
+      2  python         openat                                       /tmp  -> ok
+      2  python         openat                                       /var/tmp  -> ok
+      2  python         openat [O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC]  /dev/shm/kcc-marker-<uuid>  -> ok
+      2  python         openat [O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC]  /home/kitaru/kcc-marker-<uuid>  -> EACCES
+      2  python         openat [O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC]  /tmp/kcc-marker-<uuid>  -> EACCES
+      2  python         openat [O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC]  /var/tmp/kcc-marker-<uuid>  -> EACCES
+      1  python3        newfstatat                                   /tmp  -> ok

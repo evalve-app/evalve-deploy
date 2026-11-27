@@ -17,7 +17,7 @@ import sys
 import time
 
 ROOT = "/tmp/evalve"
-LOGS = "/tmp/kcc"
+LOGS = "/tmp/evalve/kcc"
 COMMANDS = {
     "cli": ["/app/.venv/bin/kitaru", "worker", "start", "--timeout"],
     "module": ["/app/.venv/bin/python", "-m", "kitaru.worker"],

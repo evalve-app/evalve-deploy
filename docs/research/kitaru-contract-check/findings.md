@@ -4,6 +4,8 @@ Ticket: [sc-465](https://app.shortcut.com/team-4-1/story/465). Map: [sc-382](htt
 
 **Result: 23 PASS, 0 FAIL, 13 INFO.** No fact contradicts the claim decision or the credential decision. One fact contradicts the isolation decision (section 3). One fact changes a rule of the agent image (section 1).
 
+**Added on 2026-11-27:** the decision on that contradiction ([sc-534](https://app.shortcut.com/team-4-1/story/534)) and the run of the check with its block are in section 6. The script has the option `--lock` for it.
+
 ## How it ran
 
 - `uv run check.py`, all checks, 15 minutes. The full output of each check is in `results.json`.
@@ -77,7 +79,7 @@ Labels: **PASS** = the fact is as the decisions assume. **INFO** = the check rec
 1. Agent code can write the uv cache and the two Kitaru caches. They are directories of uid 1000, and the agent has the same uid.
 2. Agent code can write `/tmp`, `/var/tmp`, `/dev/shm` and `/home/kitaru`. The sweep of sc-498 deletes only `/tmp/evalve/replays/`. An agent that writes a fixed path (for example `/tmp/cache.json`) reads its file again in the next Replay and in the next Run.
 
-An agent that writes only below `HOME`, `TMPDIR` or a relative path is isolated as the decision says. This ticket does not change the decision. The new ticket [Decide: what a Loop task does with the places outside the private directory that agent code can write](https://app.shortcut.com/team-4-1/story/534) holds the question.
+An agent that writes only below `HOME`, `TMPDIR` or a relative path is isolated as the decision says. This ticket does not change the decision. The new ticket [Decide: what a Loop task does with the places outside the private directory that agent code can write](https://app.shortcut.com/team-4-1/story/534) holds the question. Section 6 has its answer.
 
 ## 4. Not checked
 
@@ -94,6 +96,100 @@ An agent that writes only below `HOME`, `TMPDIR` or a relative path is isolated 
 cd docs/research/kitaru-contract-check
 uv run check.py            # needs uv, and docker or podman
 uv run check.py --only sigterm
+uv run check.py --lock     # with the block of sc-534 (section 6), writes results-lock.json
 ```
 
 Before a Kitaru upgrade, change the version in the `dependencies` line at the top of `check.py`. The server image, the worker image and the client follow that line. A FAIL, or an INFO result that differs from this file, is a fact that changed.
+
+Run the check with `--lock` too. An agent image has the block, so the result with `--lock` is the one that counts for a Loop task. On an Apple Silicon Mac, set `DOCKER_DEFAULT_PLATFORM=linux/arm64`: with the emulated x86_64 images, each Replay fails with `--lock` (6.4).
+
+## 6. The block: uid 1000 can write only below `/tmp/evalve` (sc-534)
+
+Ticket: [sc-534](https://app.shortcut.com/team-4-1/story/534). Run date: 2026-11-27. Machine: an Apple Silicon Mac with Docker Desktop 29.7.2. Not Linux x86_64, not podman, not Fargate.
+
+**The decision.** Code of a Replay (the agent, each process that it starts, and the evaluators) can write only below `/tmp/evalve`. The final layer of `evalve build` takes the write access of uid 1000 away from `/tmp`, `/var/tmp`, `/run/lock` and `/home/kitaru`, and from what is in them, and makes `/tmp/evalve` for uid 1000. `/dev/shm` and `/dev/mqueue` stay open, and the Supervisor empties them before each Run. The shared caches stay as they are.
+
+**The option `--lock`.** `uv run check.py --lock` builds the test agent image with the commands of that final layer (`ARG LOCK` in `image/Dockerfile`). The checks are the same, plus three facts that hold only with the block. A full run with `--lock` writes `results-lock.json`.
+
+**Result with `--lock`, all checks, natively on arm64: 26 PASS, 0 FAIL, 14 INFO.** The run of 2026-11-25 (Linux x86_64, podman, no block) gave 23 PASS, 0 FAIL, 13 INFO. Each fact of that run has the same status with the block. The 3 new PASS and the 1 new INFO are new facts of the script (6.6). One INFO fact has a different detail, and the block is not the cause: in `timeout_entrypoint`, with an agent task that ends in the 30 s, the three reads "20 s after the limit" are empty. The container exited 50.2 s after its start, and the reads are at 50 s. The same check with no block on this machine gives the same empty reads (`lock-2026-11-27/baseline-arm64/timeout_entrypoint.log`). The end is the same as in the first run: exit code 124, the agent task `completed`, the evaluator tasks `pending`.
+
+### 6.1 The places that uid 1000 can write
+
+Read in `zenmldocker/kitaru-worker:0.27.6` and in the test agent image, with `find / -xdev … -writable` and `find /dev -writable`.
+
+| Place | Where it comes from | With no block | With `--lock` |
+|---|---|---|---|
+| `/tmp`, `/var/tmp` | The image, mode 1777 | Can be written | `EACCES` |
+| `/run/lock` (`/var/lock` is a link to it) | The image, mode 1777. **Not in the first run of this check.** | Can be written | `EACCES` |
+| `/home/kitaru` | The image, owner `kitaru`. It holds three shell files (24 KB). | Can be written | `EACCES` |
+| `/tmp/uv-6c2078bb75587c01.lock` | A file of the worker image, owner root, mode 0666 | Can be written | Cannot be written |
+| `/dev/shm` | A mount of the engine (tmpfs, 64 MB with Docker) | Can be written | Can be written |
+| `/dev/mqueue` | A mount of the engine. **Not in the first run of this check.** | Can be written | Can be written |
+| `/tmp/evalve` and the three shared caches below it | With `--lock`, the image makes `/tmp/evalve` (uid 1000, mode 0700) | Can be written | Can be written |
+
+With `--lock`, the command of check 6 of `evalve build` prints nothing as uid 1000:
+
+```bash
+find / -xdev \( -path /proc -o -path /sys -o -path /dev -o -path /tmp/evalve \) -prune -o -writable -print
+```
+
+`find` exits with code 1, because uid 1000 cannot read each directory (for example `/root`). Only the standard output counts.
+
+Between two Runs with `--lock`, a marker of the first Run is found only in `/dev/shm`, `/dev/mqueue` and the three shared caches. With no block, it is found in 9 places (the 7 of section 3, `/run/lock` and `/dev/mqueue`).
+
+### 6.2 What ran
+
+The first runs of the day used a first form of the block: `/tmp` and `/var/tmp` with mode 0755, and `/home/kitaru` given to root. `/run/lock` and the lock file of uv were still open. The form of `--lock` is the final one: the four places and what is in them. The output of each run is in `lock-2026-11-27/`. The full run with `--lock` is `lock-2026-11-27/lock-arm64/all-checks.log` and `results-lock.json`. The table has the first runs.
+
+| Configuration | `token_mode` | `files_between_runs` | `uv_concurrency` |
+|---|---|---|---|
+| No block, x86_64 emulated | 9 PASS, 0 FAIL | 1 PASS, 0 FAIL | 2 PASS, 0 FAIL |
+| No block, arm64 | 9 PASS, 0 FAIL | 1 PASS, 0 FAIL | 2 PASS, 0 FAIL |
+| First block, arm64 | 9 PASS, 0 FAIL | 1 PASS, 0 FAIL | 2 PASS, 0 FAIL |
+| First block, with `/run/lock` closed and the lock file removed, arm64 | 9 PASS, 0 FAIL | 1 PASS, 0 FAIL | 2 PASS, 0 FAIL |
+| First block, x86_64 emulated | 1 PASS, **3 FAIL** | 1 PASS, 0 FAIL, but each of the 4 jobs failed | 1 PASS, **1 FAIL** |
+| First block, x86_64 emulated, probe agent with no read of `/proc/<pid>/cmdline` | 9 PASS, 0 FAIL | 1 PASS, 0 FAIL | 2 PASS, 0 FAIL |
+
+- With the block on arm64, each job completed, each worker exited with code 0, and the judge evaluator imported `openai` 3.49.0 from `/tmp/evalve/cache/uv/`. The Run of 10 jobs took 12.1 s (10.5 s with no block).
+- On emulated x86_64 with the block, each agent task exited with code 133, so no evaluator ran. The cause is the emulator, not Kitaru (6.4).
+- `files_between_runs` gave no FAIL when its jobs failed, because it had no fact for the status of a job. It has one now ("Each Replay of the two Runs completed and gave its report").
+
+### 6.3 Which program writes where
+
+One run of `token_mode` with the first block on arm64, with each worker process under `strace -f -e trace=%file` (2 Replays, cold uv cache). Summary: `lock-2026-11-27/first-lock-arm64-strace/strace-summary.txt`.
+
+- 49,971 file system calls. 22 gave `EACCES`, and none gave `EPERM` or `EROFS`.
+- All 22 are on purpose: 18 are the marker files of the probe agent, and 4 are `os.access("/app", os.W_OK)` of the evaluators.
+- The Kitaru worker wrote 14 times, each below `/tmp/evalve/cache/kitaru-*` or its private directory. Its `kitaru-task-*` directories are in `TMPDIR`.
+- uv wrote 5,653 times, each below `/tmp/evalve/cache/uv`. It only looks for `/tmp/pyproject.toml` and `/tmp/uv.toml`, which do not exist.
+- No program opened `/run/lock`, `/var/lock`, `/dev/mqueue` or the lock file of uv in `/tmp`.
+
+Thus the Kitaru worker, uv, Python and the evaluators need no place that the block closes. Kitaru drops the output of a task that completes, so the worker logs cannot show a warning of a task. The trace covers that for these 2 Replays.
+
+### 6.4 The x86 emulator of an Apple Silicon Mac
+
+With the block, a program in an x86_64 container on an Apple Silicon Mac can stop with exit code 133 when it reads `/proc/<pid>/cmdline`. The message is `assertion failed [!result.is_error]: Failed to create temporary file (ThreadContextFcntl.cpp:85 create_tempfile)`.
+
+- The emulator of Docker Desktop (Rosetta) makes a file `/tmp/rosetta.<n>.<m>` for that read. It does not use `TMPDIR`.
+- Run in the image with the block, as uid 1000: `cat /proc/self/cmdline` and `python -c 'open("/proc/self/cmdline","rb").read()'` exit with code 133. `/proc/self/comm`, `environ`, `stat` and `maps`, `/proc/1/cmdline`, `tempfile` and `multiprocessing.Lock()` work.
+- With only `/tmp` open again, the read works. With only `/var/tmp` open again, it fails.
+- The probe agent reads the `cmdline` of the processes above it. Kitaru, uv and Python do not read a `cmdline` file in a Replay: with no such read in the probe agent, each check passes on emulated x86_64 with the block.
+
+A Loop task on Fargate runs x86_64 with no emulator, so this is a limit of a local run on a Mac only. This is inferred: x86_64 with no emulator was not run. The Supervisor must read `/proc/<pid>/stat` and no `cmdline` file ([sc-498](https://app.shortcut.com/team-4-1/story/498)).
+
+### 6.5 Not verified
+
+- **x86_64 with no emulator.** The ticket [sc-548](https://app.shortcut.com/team-4-1/story/548) has this run.
+- Fargate. The smoke run [sc-530](https://app.shortcut.com/team-4-1/story/530) has the facts: the block in a Loop task, the directories that the engine makes there, and the size of `/dev/shm`.
+- podman with `--lock`. The two engine commands that changed (6.6) have the old form for podman, and that form was not run today.
+- A real agent or evaluator. Code that writes `/tmp` or the home directory of the passwd file gets `EACCES`.
+- The trace on more than 2 Replays, and on x86_64.
+
+### 6.6 What changed in the script
+
+- `--lock`, and `results-lock.json` for a full run with it. `results.json` is still the run of 2026-11-25 on Linux x86_64 with podman, from the script before these changes.
+- The logs of the Supervisor stand-in and of the probe agent are in `/tmp/evalve/kcc`, not in `/tmp/kcc`, so that they work with the block.
+- The probe agent also tries `/run/lock` and `/dev/mqueue`. It only makes its marker file and writes nothing to it, because a file in `/dev/mqueue` is a message queue.
+- `image` has two new facts: the places of the test agent image that uid 1000 can write (with `--lock`: none), and the directories below `/dev` that uid 1000 can write.
+- `files_between_runs` has two new facts: each Replay completed, and with `--lock` the four places give `EACCES` and hold no marker.
+- For docker: `rm -f -t 0` and `image exists` are commands of podman only, so the script left its containers and pulled each image again. Docker now gets `rm -f` and `image inspect`.

@@ -1,0 +1,23 @@
+Kitaru 0.27.6, engine docker
+Pulling docker.io/library/postgres:16-alpine ...
+Pulling docker.io/zenmldocker/kitaru-server:0.27.6 ...
+Pulling docker.io/zenmldocker/kitaru-worker:0.27.6 ...
+Building localhost/kcc-agent:0.27.6 ...
+Starting the stack kcc-537c11 ...
+
+== uv_concurrency: 10 Replays at the same time on one cold uv cache.
+  [PASS] 10 `uv run` commands at the same time are safe on one cold uv cache (the command form of Kitaru)
+         seconds: 7.2
+         exit_codes: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+         errors: []
+  [FAIL] A Run with 10 jobs completes with 10 job-scoped workers in one container and one shared uv cache
+         jobs: ["failed", "failed", "failed", "failed", "failed", "failed", "failed", "failed", "failed", "failed"]
+         exit_codes: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+         seconds: 5.2
+         failed_tasks: ["Agent process exited with code 133.\n\nstderr tail:\nassertion failed [!result.is_error]: Failed to create temporary file\n(ThreadContextFcntl.cpp:85 create_tempfile)\n Trace/breakpoint trap\n", "Agent process exited with code 133.\n\nstderr tail:\nassertion failed [!result.is_error]: Failed to create temporary file\n(ThreadContextFcntl.cpp:85 create_tempfile)\n Trace/breakpoint trap\n", "Agent process exited with code 133.\n\nstderr tail:\nassertion failed [!result.is_error]: Failed to create temporary file\n(ThreadContextFcntl.cpp:85 create_tempfile)\n Trace/breakpoint trap\n"]
+  [INFO] Peak memory of the container for the 10 workers (cgroup `memory.peak`, a local number, not Fargate)
+         megabytes: 2841
+
+Kept the stack kcc-537c11 (http://127.0.0.1:61358). Remove: docker rm -f $(docker ps -aq --filter name=kcc-537c11)
+
+1 PASS, 1 FAIL, 1 INFO

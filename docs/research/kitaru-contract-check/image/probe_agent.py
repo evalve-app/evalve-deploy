@@ -25,7 +25,7 @@ from kitaru.api_models.v1.session import (
 from kitaru.client.api_client import KitaruAPIClient
 from kitaru.task import get_task_id, get_task_inputs
 
-LOGS = "/tmp/kcc"
+LOGS = "/tmp/evalve/kcc"
 SIGNAL_LOG = f"{LOGS}/agent-signals-{os.getpid()}.log"
 
 
@@ -85,8 +85,9 @@ def try_write(path: str | None, marker: str) -> dict:
     result: dict = {"path": path}
     try:
         os.makedirs(path, exist_ok=True)
-        with open(os.path.join(path, marker), "w") as handle:
-            handle.write("x")
+        # Only the creation counts. A file in /dev/mqueue is a message queue,
+        # which `write` refuses.
+        os.close(os.open(os.path.join(path, marker), os.O_WRONLY | os.O_CREAT, 0o644))
         result["write"] = "ok"
     except OSError as error:
         result["write"] = errno.errorcode.get(error.errno, str(error))
@@ -131,7 +132,9 @@ def probe(marker: str) -> dict:
                 os.getcwd(),
                 "/tmp",
                 "/var/tmp",
+                "/run/lock",
                 "/dev/shm",
+                "/dev/mqueue",
                 "/home/kitaru",
                 env.get("UV_CACHE_DIR"),
                 env.get("KITARU_WORKER_BLOB_CACHE_ROOT"),

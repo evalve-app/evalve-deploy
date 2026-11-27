@@ -13,9 +13,15 @@ Run it before each Kitaru upgrade:
     uv run check.py                 # all checks, about 15 minutes
     uv run check.py --only token    # the checks whose name contains "token"
     uv run check.py --keep          # leave the containers for inspection
+    uv run check.py --lock          # with the block of sc-534 (see below)
 
 To check a different Kitaru version, change the version in the `dependencies`
 line above. The server image, the worker image and the client follow it.
+
+With `--lock`, the test agent image has the block of the story sc-534: uid 1000
+can write only below `/tmp/evalve`. The checks are the same, plus the facts
+that hold only with the block. A full run with `--lock` writes
+`results-lock.json`.
 
 It needs `uv`, and `docker` or `podman`. It pulls images from Docker Hub, and
 an evaluator installs `openai` from PyPI. It writes `results.json` next to
@@ -29,6 +35,7 @@ import hashlib
 import importlib.metadata
 import json
 import os
+import platform
 import secrets
 import shutil
 import subprocess
@@ -89,6 +96,14 @@ WORKER_IMAGE = f"docker.io/zenmldocker/kitaru-worker:{VERSION}"
 AGENT_IMAGE = f"localhost/kcc-agent:{VERSION}"
 POSTGRES_IMAGE = "docker.io/library/postgres:16-alpine"
 ENGINE = "docker" if shutil.which("docker") else "podman"
+LOCK = False  # `--lock`: build the test agent image with the block of sc-534.
+BLOCKED = ("/tmp", "/var/tmp", "/run/lock", "/home/kitaru")
+# Check 6 of `evalve build`: the places of the image that uid 1000 can write.
+FIND_WRITABLE = (
+    "find", "/", "-xdev",
+    "(", "-path", "/proc", "-o", "-path", "/sys", "-o", "-path", "/dev", "-o", "-path", "/tmp/evalve", ")",
+    "-prune", "-o", "-writable", "-print",
+)  # fmt: skip
 PASSWORD = "kcc-password"
 SHORT_TOKEN_SECONDS = 40
 SETTLED = {"completed", "failed", "canceled"}
@@ -228,7 +243,9 @@ class Stack:
 
     def down(self) -> None:
         names = [*self.boxes, f"{self.run_id}-server-short", f"{self.run_id}-server", f"{self.run_id}-db"]
-        engine("rm", "-f", "-t", "0", *names, check=False)
+        # `-t` is an option of podman only. `docker rm -f` does not wait.
+        now = ["-t", "0"] if ENGINE == "podman" else []
+        engine("rm", "-f", *now, *names, check=False)
         engine("network", "rm", self.network, check=False)
 
 
@@ -250,12 +267,15 @@ class Ctx:
 
 def build_images() -> None:
     for image in (POSTGRES_IMAGE, SERVER_IMAGE, WORKER_IMAGE):
-        if engine("image", "exists", image, check=False).returncode != 0:
+        # `image exists` is a command of podman only.
+        present = "exists" if ENGINE == "podman" else "inspect"
+        if engine("image", present, image, check=False).returncode != 0:
             print(f"Pulling {image} ...")
             engine("pull", image, timeout=1800)
     print(f"Building {AGENT_IMAGE} ...")
     engine(
-        "build", "-q", "--build-arg", f"KITARU_VERSION={VERSION}", "-t", AGENT_IMAGE,
+        "build", "-q", "--build-arg", f"KITARU_VERSION={VERSION}",
+        "--build-arg", f"LOCK={int(LOCK)}", "-t", AGENT_IMAGE,
         str(HERE / "image"), timeout=1800,
     )  # fmt: skip
 
@@ -430,14 +450,14 @@ def box_file(box: str, path: str) -> str:
 
 
 def worker_log(box: str, job_id: Any) -> list[str]:
-    return box_file(box, f"/tmp/kcc/worker-{job_id}.log").splitlines()
+    return box_file(box, f"/tmp/evalve/kcc/worker-{job_id}.log").splitlines()
 
 
 def signal_worker(box: str, job_id: Any, name: str) -> None:
     box_python(
         box,
         "import json,os,signal;"
-        f"os.kill(json.load(open('/tmp/kcc/pids.json'))['{job_id}'], signal.{name})",
+        f"os.kill(json.load(open('/tmp/evalve/kcc/pids.json'))['{job_id}'], signal.{name})",
     )
 
 
@@ -557,6 +577,18 @@ async def check_image(ctx: Ctx) -> None:
     ctx.rec.expect(name, "In the test agent image, `find /app -writable` prints nothing for uid 1000",
                    writable.returncode == 0 and writable.stdout.strip() == "",
                    output=writable.stdout.strip()[:300])  # fmt: skip
+    # `find` exits with code 1, because uid 1000 cannot read each directory
+    # (for example /root). Only the standard output counts.
+    places = run(AGENT_IMAGE, *FIND_WRITABLE).stdout.split()
+    if LOCK:
+        ctx.rec.expect(name, "With the block, uid 1000 can write no place of the test agent image other than `/tmp/evalve`",
+                       places == [], output=places[:50])  # fmt: skip
+    else:
+        ctx.rec.info(name, "The places of the test agent image that uid 1000 can write (the image only, not the mounts of the engine)",
+                     output=places[:50])  # fmt: skip
+    mounts = run(AGENT_IMAGE, "find", "/dev", "-maxdepth", "1", "-type", "d", "-writable").stdout.split()
+    ctx.rec.info(name, "The directories below `/dev` that uid 1000 can write (the engine makes them, the image cannot lock them)",
+                 output=mounts)  # fmt: skip
 
 
 async def check_token_mode(ctx: Ctx) -> None:
@@ -674,7 +706,7 @@ async def check_files_between_runs(ctx: Ctx) -> None:
             box_python(
                 box,
                 "import os\n"
-                "for root in ('/tmp','/var/tmp','/dev/shm','/home/kitaru','/app','/opt'):\n"
+                "for root in ('/tmp','/var/tmp','/run/lock','/dev/shm','/dev/mqueue','/home/kitaru','/app','/opt'):\n"
                 "    for d,_,fs in os.walk(root):\n"
                 "        for f in fs:\n"
                 "            p=os.path.join(d,f)\n"
@@ -687,7 +719,7 @@ async def check_files_between_runs(ctx: Ctx) -> None:
 
     def group(path: str) -> str:
         for prefix in ("/tmp/evalve/cache/uv", "/tmp/evalve/cache/kitaru-blobs",
-                       "/tmp/evalve/cache/kitaru-payloads", "/tmp/evalve/replays", "/tmp/kcc"):  # fmt: skip
+                       "/tmp/evalve/cache/kitaru-payloads", "/tmp/evalve/replays", "/tmp/evalve/kcc"):  # fmt: skip
             if path.startswith(prefix):
                 return prefix + "/…"
         return path
@@ -697,11 +729,18 @@ async def check_files_between_runs(ctx: Ctx) -> None:
         counts[group(path)] = counts.get(group(path), 0) + 1
     ctx.rec.info(name, "The files of uid 1000 that stay after two Runs (the private directories are deleted, as the Supervisor does)",
                  files=counts)  # fmt: skip
+    ctx.rec.expect(name, "Each Replay of the two Runs completed and gave its report",
+                   len([r for r in reports if r]) == 4, reports=len([r for r in reports if r]))  # fmt: skip
     second = [r for r in reports[2:] if r]
     seen = {w["path"]: w["markers_of_other_replays"] for r in second for w in r["writes"] if w["markers_of_other_replays"]}
     ctx.rec.info(name, "Marker files of an earlier Replay that a Replay of the second Run finds",
                  paths_with_markers={k: len(v) for k, v in seen.items()},
                  places_agent_code_can_write=sorted({w["path"] for r in second for w in r["writes"] if w["write"] == "ok"}))  # fmt: skip
+    if LOCK:
+        writes = {w["path"]: w["write"] for r in second for w in r["writes"]}
+        ctx.rec.expect(name, "With the block, agent code cannot write `/tmp`, `/var/tmp`, `/run/lock` and `/home/kitaru`, and finds no marker there",
+                       bool(second) and all(writes.get(p) == "EACCES" for p in BLOCKED) and not any(p in seen for p in BLOCKED),
+                       writes={p: writes.get(p) for p in BLOCKED})  # fmt: skip
     private_left = [p for p in after if p.startswith("/tmp/evalve/replays")]
     ctx.rec.expect(name, "No file stays in a private directory after its worker process exits",
                    not private_left, left=private_left[:10])  # fmt: skip
@@ -791,7 +830,7 @@ async def check_sigterm(ctx: Ctx) -> None:
     timeline = await watch(ctx, job_id, 20, until=lambda s: s["job"] in SETTLED)
     state = await snapshot(ctx, job_id)
     agent = next(t for t in state["tasks"] if t["kind"] == "agent")
-    signals = box_python(box, "import glob\nfor f in sorted(glob.glob('/tmp/kcc/agent-signals-*.log')): print(f, open(f).read().split())").strip()
+    signals = box_python(box, "import glob\nfor f in sorted(glob.glob('/tmp/evalve/kcc/agent-signals-*.log')): print(f, open(f).read().split())").strip()
     ctx.rec.expect(name, "A worker that gets SIGTERM two times cancels its tasks and does not drain",
                    info["ended"] - sent < 60 and agent["status"] != "completed",
                    exit_code=info["exit_code"], seconds_from_second_sigterm_to_exit=round(info["ended"] - sent, 1),
@@ -819,9 +858,9 @@ async def check_timeout_entrypoint(ctx: Ctx) -> None:
         # Read the state of the worker 20 s after the limit, before the SIGKILL at 30 s.
         await asyncio.sleep(max(0, started + limit + 20 - time.time()))
         log = worker_log(box, job_id)
-        launcher_signals = box_file(box, "/tmp/kcc/launcher-signals.log").split()
-        agent_signals = box_python(box, "import glob\nfor f in glob.glob('/tmp/kcc/agent-signals-*.log'): print(open(f).read().split())").strip()
-        alive = box_python(box, "import json,os\np=json.load(open('/tmp/kcc/pids.json'))\nprint([os.path.exists(f'/proc/{v}') for v in p.values()])").strip()
+        launcher_signals = box_file(box, "/tmp/evalve/kcc/launcher-signals.log").split()
+        agent_signals = box_python(box, "import glob\nfor f in glob.glob('/tmp/evalve/kcc/agent-signals-*.log'): print(open(f).read().split())").strip()
+        alive = box_python(box, "import json,os\np=json.load(open('/tmp/evalve/kcc/pids.json'))\nprint([os.path.exists(f'/proc/{v}') for v in p.values()])").strip()
         at_20 = short(await snapshot(ctx, job_id))
         code = int(engine("wait", box, timeout=120).stdout.strip() or -1)
         ended = time.time()
@@ -946,10 +985,14 @@ async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--only", default="", help="Run the checks whose name contains this text.")
     parser.add_argument("--keep", action="store_true", help="Do not remove the containers.")
+    parser.add_argument("--lock", action="store_true",
+                        help="Build the test agent image with the block of sc-534: uid 1000 can write only below /tmp/evalve.")  # fmt: skip
     args = parser.parse_args()
+    global LOCK
+    LOCK = args.lock
     selected = [check for check in CHECKS if args.only in check.__name__]
 
-    print(f"Kitaru {VERSION}, engine {ENGINE}")
+    print(f"Kitaru {VERSION}, engine {ENGINE}" + (", with the block (--lock)" if LOCK else ""))
     build_images()
     stack = Stack(run_id=f"kcc-{secrets.token_hex(3)}")
     rec = Recorder()
@@ -979,12 +1022,15 @@ async def main() -> int:
 
     counts = {s: sum(1 for i in rec.items if i["status"] == s) for s in ("PASS", "FAIL", "INFO")}
     if not args.only:
-        (HERE / "results.json").write_text(
+        (HERE / ("results-lock.json" if LOCK else "results.json")).write_text(
             json.dumps(
                 {
                     "kitaru_version": VERSION,
                     "server_version": getattr(info, "version", None),
                     "engine": ENGINE,
+                    "host": f"{platform.system()} {platform.machine()}",
+                    "platform": os.environ.get("DOCKER_DEFAULT_PLATFORM", "the default of the engine"),
+                    "lock": LOCK,
                     "started": started.isoformat(),
                     "counts": counts,
                     "results": rec.items,
