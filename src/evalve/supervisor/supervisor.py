@@ -19,6 +19,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
@@ -62,10 +63,12 @@ class Settings:
     """The environment of the Supervisor (contract version 1)."""
 
     def __init__(self, environ):
-        self.backend_url = _text(environ, "EVALVE_BACKEND_URL").rstrip("/")
+        self.backend_url = _url(environ, "EVALVE_BACKEND_URL").rstrip("/")
         self.loop_id = _text(environ, "EVALVE_LOOP_ID")
+        if any(character.isspace() or character in "/?#" for character in self.loop_id):
+            raise SettingsError("EVALVE_LOOP_ID")  # It is a part of the poll URL.
         self.secret = _text(environ, "EVALVE_LOOP_TASK_SECRET")
-        self.kitaru_api_url = _text(environ, "KITARU_API_URL")
+        self.kitaru_api_url = _url(environ, "KITARU_API_URL")
         self.max_replays = _number(environ, "EVALVE_MAX_REPLAYS", whole=True)
         self.poll_interval = _number(environ, "EVALVE_POLL_INTERVAL_SECONDS")
         self.idle_timeout = _number(environ, "EVALVE_IDLE_TIMEOUT_SECONDS")
@@ -77,6 +80,17 @@ def _text(environ, name):
     if not value:
         raise SettingsError(name)
     return value
+
+
+def _url(environ, name):
+    text = _text(environ, name)
+    try:
+        parts = urllib.parse.urlsplit(text)
+    except ValueError:
+        raise SettingsError(name) from None
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise SettingsError(name)
+    return text
 
 
 def _number(environ, name, whole=False):
@@ -150,16 +164,16 @@ class PollFailed(Exception):
 
 def poll(settings, last, timeout=POLL_TIMEOUT_SECONDS):
     """Send one poll. Return a Reply, or raise Refused or PollFailed."""
-    request = urllib.request.Request(
-        f"{settings.backend_url}/v1/loops/{settings.loop_id}/task/poll",
-        data=json.dumps({"contract_version": CONTRACT_VERSION, "last": last}).encode(),
-        headers={
-            "Authorization": f"EvalveLoopTask {settings.secret}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
     try:
+        request = urllib.request.Request(
+            f"{settings.backend_url}/v1/loops/{settings.loop_id}/task/poll",
+            data=json.dumps({"contract_version": CONTRACT_VERSION, "last": last}).encode(),
+            headers={
+                "Authorization": f"EvalveLoopTask {settings.secret}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return Reply(json.loads(response.read()))
     except urllib.error.HTTPError as error:
@@ -275,8 +289,8 @@ class Supervisor:
         self.run_deadline = None
         self.run_id = None  # the Run ID of the Assignments that the Supervisor saw last
         self.tokens = set()
-        self.stop_requested = False  # set by SIGTERM
-        self.drain_started_at = None
+        self.stop_requested_at = None  # the time of the first SIGTERM
+        self.draining = False
         self.exit_code = None
 
     # ---------------------------------------------------------------- the log
@@ -307,23 +321,36 @@ class Supervisor:
 
     def request_stop(self):
         """SIGTERM. A second SIGTERM changes nothing."""
-        self.stop_requested = True
+        if self.stop_requested_at is None:
+            self.stop_requested_at = self.clock.now()
+
+    def _drain_end(self):
+        """The drain ends this long after the SIGTERM, also when a poll was slow."""
+        return self.stop_requested_at + DRAIN_SECONDS
 
     def step(self):
         """Look at the worker processes, poll when it is time, and decide on an exit."""
         self._collect_exits()
         self._kill_after_deadline()
-        if self.stop_requested and self.drain_started_at is None:
+        if self.stop_requested_at is not None and not self.draining:
             self._start_drain()
-        if self.clock.now() >= self.next_poll_at:
+        if self.clock.now() >= self.next_poll_at and self._time_for_a_poll():
             self._poll()
             self.next_poll_at = self.clock.now() + self.settings.poll_interval
         if self.exit_code is not None:
             return
-        if self.drain_started_at is not None:
-            self._continue_drain()
+        if self.stop_requested_at is not None:
+            # A SIGTERM during the poll starts its drain in the next step.
+            if self.draining:
+                self._continue_drain()
         else:
             self._exit_when_idle()
+
+    def _time_for_a_poll(self):
+        """During the drain, no poll starts that can end after the end of the drain."""
+        if self.stop_requested_at is None:
+            return True
+        return self.clock.now() + self.poll_timeout <= self._drain_end()
 
     def _poll(self):
         try:
@@ -338,8 +365,10 @@ class Supervisor:
         self.assignments = reply.assignments
         self.run_deadline = reply.run_deadline
         self.tokens.update(item.worker_token for item in reply.assignments)
-        if self.drain_started_at is not None:
-            return  # After SIGTERM the Supervisor starts no new worker process.
+        if self.stop_requested_at is not None:
+            # After SIGTERM the Supervisor starts no new worker process. The
+            # signal can arrive while the poll waits for its reply.
+            return
         if reply.assignments:
             run_id = reply.assignments[0].run_id
             if self.run_id is not None and run_id != self.run_id:
@@ -531,7 +560,7 @@ class Supervisor:
             self._clean_exit("idle")
 
     def _start_drain(self):
-        self.drain_started_at = self.clock.now()
+        self.draining = True
         self.log("sigterm", workers=len(self.workers))
         for worker in self.workers.values():
             try:
@@ -541,7 +570,7 @@ class Supervisor:
                 pass
 
     def _continue_drain(self):
-        if self.workers and self.clock.now() - self.drain_started_at < DRAIN_SECONDS:
+        if self.workers and self.clock.now() < self._drain_end():
             return
         self._kill_workers()
         self._delete_private_directories()

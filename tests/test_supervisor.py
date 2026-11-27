@@ -97,6 +97,7 @@ class Backend:
         self.requests = []  # (path, Authorization header, body)
         self.reply = (200, {"run_deadline": None, "assignments": []})
         self.delay = 0
+        self.during = None  # what happens while the Supervisor waits for the reply
         backend = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -104,6 +105,8 @@ class Backend:
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 backend.requests.append((self.path, self.headers.get("Authorization"), body))
                 time.sleep(backend.delay)
+                if backend.during:
+                    backend.during()
                 status, reply = backend.reply
                 data = reply if isinstance(reply, bytes) else json.dumps(reply).encode()
                 self.send_response(status)
@@ -700,9 +703,11 @@ class SigtermTest(SupervisorCase):
         item = self.supervisor()
         item.step()
         pid = self.record("a")["pid"]
+        # The 100 s start at the SIGTERM, not at the next step of the Supervisor.
         item.request_stop()
-        item.step()
-        self.after(item, 99)
+        self.after(item, 50)
+        until(lambda: self.lines("a", ".signals"))
+        self.after(item, 49)
         self.assertIsNone(item.exit_code)
         self.assertTrue(alive(pid))
         self.after(item, 1)
@@ -710,6 +715,40 @@ class SigtermTest(SupervisorCase):
         self.assertFalse(alive(pid))
         self.assertEqual(os.listdir(self.replays), [])
         self.assertTrue(self.backend.bodies[-1]["last"])
+
+    def test_no_poll_of_the_drain_can_end_after_the_100_s(self):
+        self.plan("a", "ignore")
+        self.assign("a")
+        item = self.supervisor(poll_timeout=10)
+        item.step()
+        self.record("a")
+        item.request_stop()
+        self.after(item, 90)
+        polls = len(self.backend.requests)
+        self.assertEqual(polls, 2)
+        # A poll that starts now can take 10 s, and the drain ends in less than 10 s.
+        self.after(item, 2)
+        self.after(item, 7)
+        self.assertEqual(len(self.backend.requests), polls)
+        self.assertIsNone(item.exit_code)
+        self.after(item, 1)
+        self.assertEqual(item.exit_code, 0)
+        self.assertEqual([body["last"] for body in self.backend.bodies], [False, False, True])
+
+    def test_a_sigterm_during_a_poll_starts_no_worker(self):
+        self.assign("a")
+        item = self.supervisor()
+        # The signal arrives while the Supervisor waits for the reply of the poll.
+        self.backend.during = item.request_stop
+        item.step()
+        self.backend.during = None
+        self.assertEqual(item.workers, {})
+        self.assertEqual(self.starts("a"), 0)
+        self.assertIsNone(item.exit_code)
+        item.step()
+        self.assertEqual(item.exit_code, 0)
+        self.assertEqual([body["last"] for body in self.backend.bodies], [False, True])
+        self.assertEqual(self.events("worker_start"), [])
 
     def test_a_refused_poll_during_the_drain_ends_it_immediately(self):
         self.plan("a", "drain")
@@ -775,7 +814,9 @@ class EnvironmentTest(SupervisorCase):
             "EVALVE_POLL_INTERVAL_SECONDS": ("0", "-1", "soon", "nan"),
             "EVALVE_IDLE_TIMEOUT_SECONDS": ("", "inf"),
             "EVALVE_SOFT_LIFETIME_SECONDS": ("x",),
-            "EVALVE_LOOP_ID": ("  ",),
+            "EVALVE_LOOP_ID": ("  ", "loop 1", "loop/1"),
+            "EVALVE_BACKEND_URL": ("not-a-url", "evalve.example.com/evalve", "ftp://host/evalve", "https://"),
+            "KITARU_API_URL": ("kitaru", "http://[bad"),
         }
         for name, values in invalid.items():
             for value in values:
