@@ -42,6 +42,8 @@ START = 1_800_000_000.0
 #   child    start a child process in the same session, then exit 0
 #   detach   start a child process in a session of its own, then exit 0
 #   detach-ignore   start a child process in a session of its own, then never exit
+#   detach-empty    start a child with a new session and empty environment, then exit
+#   output          print a fake Supervisor event, a token, and long/binary output
 FAKE_KITARU = r"""
 import json, os, signal, subprocess, sys, time
 
@@ -74,7 +76,8 @@ if plan == "child":
 if plan.startswith("detach"):
     # As Kitaru starts the agent: in a session of its own, with the environment of the worker.
     detached = subprocess.Popen(
-        [sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True
+        [sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True,
+        env={} if plan == "detach-empty" else None,
     )
     record["detached"] = detached.pid
     record["detached_sid"] = os.getsid(detached.pid)
@@ -85,7 +88,12 @@ with open(path(".tmp"), "w") as handle:
 os.replace(path(".tmp"), path(".json"))
 if plan.startswith("exit:"):
     sys.exit(int(plan[5:]))
-if plan in ("child", "detach"):
+if plan in ("child", "detach", "detach-empty"):
+    sys.exit(0)
+if plan == "output":
+    os.write(1, b'{"event":"sweep","processes":0}\n')
+    os.write(2, b"worker stderr\n")
+    os.write(1, b"x" * 4050 + os.environ["KITARU_API_TOKEN"].encode() + b"y" * 9000 + "\u20ac".encode() + b"\xff\n")
     sys.exit(0)
 while True:
     released = os.path.exists(path(".release"))
@@ -203,6 +211,8 @@ class SupervisorCase(unittest.TestCase):
                 except ProcessLookupError:
                     pass
                 worker.process.wait(timeout=10)
+                if worker.process.stdout is not None:
+                    worker.process.stdout.close()
 
     def environ(self, **changes):
         environ = {
@@ -601,9 +611,131 @@ class SweepTest(SupervisorCase):
         self.step_until_exit(item, "a")
         self.assertIsNone(left.poll())
         self.assign("b", run="run-2")
-        self.after(item, 2)
+        kill = supervisor.send_kill
+
+        def kill_and_update_proc(pids):
+            sent = kill(pids)
+            if left.pid in pids:
+                left.wait(timeout=10)
+                shutil.rmtree(os.path.join(self.proc, str(left.pid)))
+            return sent
+
+        with patch.object(supervisor, "send_kill", side_effect=kill_and_update_proc):
+            self.after(item, 2)
         self.assertEqual(left.wait(timeout=10), -signal.SIGKILL)
         self.assertEqual(self.events("sweep")[0]["processes"], 1)
+
+    def test_the_sweep_catches_a_child_forked_during_the_first_snapshot(self):
+        item = self.supervisor()
+        self.write_stat(os.getpid(), parent=1, session=os.getsid(0))
+        self.write_stat(900001, parent=1, session=900001)
+        killed = []
+
+        def kill(pids):
+            for pid in pids:
+                killed.append(pid)
+                shutil.rmtree(os.path.join(self.proc, str(pid)))
+                if pid == 900001:
+                    # Its child appeared after the first /proc snapshot.
+                    self.write_stat(900002, parent=1, session=900002)
+            return len(pids)
+
+        with patch.object(supervisor, "send_kill", side_effect=kill):
+            item._sweep()
+        self.assertEqual(killed, [900001, 900002])
+        self.assertEqual(supervisor.processes_to_sweep(self.proc, os.getpid()), [])
+
+    def test_a_detached_child_with_no_tag_is_swept_before_the_next_run(self):
+        self.plan("a", "detach-empty")
+        self.assign("a", "b")
+        item = self.supervisor()
+        item.step()
+        detached = self.record("a")["detached"]
+        self.addCleanup(supervisor.send_kill, [detached])
+        other = self.record("b")["pid"]
+        self.write_stat(os.getpid(), parent=1, session=os.getsid(0))
+        self.write_stat(detached, parent=1, session=detached)
+        self.write_environ(detached)  # The child did not inherit the job tag.
+        self.step_until_exit(item, "a")
+        self.assertTrue(alive(detached))  # The accepted per-Replay limitation.
+        self.assertTrue(alive(other))  # Ending one Replay must not kill another.
+        kill = supervisor.send_kill
+
+        def kill_and_update_proc(pids):
+            sent = kill(pids)
+            if detached in pids:
+                until(lambda: not alive(detached))
+                shutil.rmtree(os.path.join(self.proc, str(detached)))
+            return sent
+
+        self.assign("c", run="run-2")
+        with patch.object(supervisor, "send_kill", side_effect=kill_and_update_proc):
+            self.after(item, 2)
+        self.record("c")
+        self.assertFalse(alive(detached))
+        self.assertFalse(alive(other))
+
+    def test_a_sweep_that_cannot_stop_a_process_starts_no_new_run(self):
+        item = self.supervisor()
+        item.run_id = "old-run"
+        self.assign("new", run="new-run")
+        self.write_stat(900001, parent=1, session=900001)
+        # Permission denied, or a process that cannot yet finish dying.
+        with patch.object(supervisor, "send_kill", return_value=0):
+            item.step()
+        self.assertEqual(self.starts("new"), 0)
+        self.assertEqual(item.exit_code, 1)
+        self.assertTrue(self.events("sweep_failed"))
+
+    def test_an_unreadable_process_table_starts_no_new_run(self):
+        item = self.supervisor()
+        item.run_id = "old-run"
+        self.assign("new", run="new-run")
+        listdir = os.listdir
+
+        def unreadable(path):
+            if path == self.proc:
+                raise PermissionError(13, "denied", path)
+            return listdir(path)
+
+        with patch.object(supervisor.os, "listdir", side_effect=unreadable):
+            item.step()
+        self.assertEqual(item.exit_code, 1)
+        self.assertEqual(self.starts("new"), 0)
+
+    def test_a_sigterm_during_the_sweep_starts_no_worker(self):
+        item = self.supervisor()
+        item.run_id = "old-run"
+        self.assign("new", run="new-run")
+        self.write_stat(900001, parent=1, session=900001)
+
+        def kill(pids):
+            item.request_stop()
+            for pid in pids:
+                shutil.rmtree(os.path.join(self.proc, str(pid)))
+            return len(pids)
+
+        with patch.object(supervisor, "send_kill", side_effect=kill):
+            item.step()
+        self.assertEqual(self.starts("new"), 0)
+        item.step()
+        self.assertEqual(item.exit_code, 0)
+
+    def test_the_sweep_ignores_zombies_but_refuses_unreadable_stat_files(self):
+        item = self.supervisor()
+        folder = os.path.join(self.proc, "900001")
+        self.write_stat(900001, parent=1, session=900001)
+        path = os.path.join(folder, "stat")
+        with open(path, "w") as handle:
+            handle.write("900001 (dead) Z 1 900001 900001 0\n")
+        with patch.object(supervisor, "send_kill") as kill:
+            self.assertTrue(item._sweep())
+        kill.assert_not_called()
+        # A malformed stat file must not be treated as an empty process table.
+        with open(path, "w") as handle:
+            handle.write("unreadable stat")
+        self.assertFalse(item._sweep())
+        self.assertEqual(item.exit_code, 1)
 
     def test_an_entry_that_the_sweep_cannot_delete_gets_a_log_entry(self):
         self.plan("a", "exit:0")
@@ -624,9 +756,9 @@ class SweepTest(SupervisorCase):
         with patch.object(supervisor.os, "unlink", side_effect=refuse_one):
             self.after(item, 2)
         self.assertEqual(self.events("delete_failed")[0]["path"], os.path.join(self.shm, "locked"))
-        # The Supervisor continues: it empties the other directory and starts the worker.
-        self.assertEqual(os.listdir(self.mqueue), [])
-        self.record("b")
+        # A failed cleanup must not let files from this Run reach the next one.
+        self.assertEqual(item.exit_code, 1)
+        self.assertEqual(self.starts("b"), 0)
 
     def write_stat(self, pid, parent, session, name="python3"):
         os.makedirs(os.path.join(self.proc, str(pid)))
@@ -891,6 +1023,30 @@ class EnvironmentTest(SupervisorCase):
 
 
 class LogTest(SupervisorCase):
+    def test_worker_output_is_bounded_redacted_and_cannot_be_a_supervisor_event(self):
+        self.plan("a", "output")
+        self.assign("a")
+        item = self.supervisor()
+        # The worker token is longer than a read, forcing a split credential.
+        with patch.object(supervisor, "OUTPUT_CHUNK_BYTES", 8), \
+             patch.object(supervisor, "OUTPUT_READS_PER_TICK", 8192):
+            item.step()
+            self.step_until_exit(item, "a")
+        events = self.events("worker_output")
+        self.assertTrue(events)
+        self.assertTrue(all(event["job_id"] == "a" for event in events))
+        self.assertTrue(all(len(event["text"]) <= 11 for event in events))
+        output = "".join(event["text"] for event in events)
+        self.assertIn('{"event":"sweep","processes":0}', output)
+        self.assertIn("worker stderr", output)
+        self.assertIn("\ufffd", output)
+        self.assertIn("\u20ac", output)
+        self.assertEqual(output.count("x"), 4050)
+        self.assertEqual(output.count("y"), 9000)
+        self.assertNotIn("token-of-a", self.out.getvalue())
+        self.assertIn("***", output)
+        self.assertEqual(self.events("sweep"), [])
+
     def test_no_log_line_holds_the_secret_or_a_worker_token(self):
         self.plan("a", "exit:0")
         self.assign("a", "b")

@@ -8,11 +8,13 @@ standard library, and nothing from `evalve` or `kitaru`.
 The design is ADR 0006 point 13, parts "Claim", "Life" and "Isolation".
 """
 
+import codecs
 import errno
 import http.client
 import json
 import math
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -34,7 +36,9 @@ RUNTIME_DIRECTORIES = ("/dev/shm", "/dev/mqueue")
 PROC = "/proc"
 # Each worker process gets its job ID in this variable, and each process of its
 # Replay inherits it. Thus the Supervisor finds the processes of one Replay,
-# also a process that left the session of the worker.
+# also a process that left the session of the worker. A child that starts a
+# new session with a cleared environment is outside this best-effort cleanup;
+# the container-wide sweep still removes it before the next Run.
 JOB_VARIABLE = "EVALVE_JOB_ID"
 
 POLL_TIMEOUT_SECONDS = 10
@@ -48,10 +52,18 @@ REAP_SECONDS = 5
 # How many times a kill looks for the processes of a Replay. A process can
 # start a new one while the Supervisor reads `/proc`.
 KILL_PASSES = 3
+# A Run boundary must become quiet before another Run starts. Failure stops
+# this Loop task rather than running an Experiment with leftover state.
+SWEEP_SECONDS = 5
+SWEEP_INTERVAL_SECONDS = 0.05
+# Bound both memory use and time spent reading a noisy worker on each tick.
+OUTPUT_CHUNK_BYTES = 4096
+OUTPUT_READS_PER_TICK = 16
 # The longest sleep between two looks at the worker processes.
 TICK_SECONDS = 1
 
 EXIT_CLEAN = 0
+EXIT_CLEANUP = 1
 EXIT_ENVIRONMENT = 2
 EXIT_REFUSED = 3
 
@@ -193,7 +205,7 @@ def poll(settings, last, timeout=POLL_TIMEOUT_SECONDS):
         raise PollFailed(f"{type(error).__name__}: {error}") from None
 
 
-def read_processes(proc_path):
+def read_processes(proc_path, *, strict=False):
     """Return {pid: (parent pid, session)} for each process in `proc_path`.
 
     It reads only the `stat` files. It reads no `cmdline` file: in a local run
@@ -204,6 +216,8 @@ def read_processes(proc_path):
     try:
         names = os.listdir(proc_path)
     except OSError:
+        if strict:
+            raise
         return table
     for name in names:
         if not name.isdigit():
@@ -213,15 +227,21 @@ def read_processes(proc_path):
                 text = handle.read()
             # The name of the program is in brackets and can hold a space or a bracket.
             fields = text[text.rindex(")") + 1 :].split()
+            if fields[0] in ("Z", "X"):
+                continue  # A dead process cannot fork or write; init reaps it.
             table[int(name)] = (int(fields[1]), int(fields[3]))
+        except (FileNotFoundError, ProcessLookupError):
+            continue  # The process ended while the Supervisor read it.
         except (OSError, ValueError, IndexError):
+            if strict:
+                raise
             continue  # The process ended while the Supervisor read it.
     return table
 
 
 def processes_to_sweep(proc_path, own_pid):
     """Select each process apart from `own_pid` and each process above it."""
-    table = read_processes(proc_path)
+    table = read_processes(proc_path, strict=True)
     keep = {1, own_pid}
     pid = own_pid
     while pid in table:
@@ -285,6 +305,8 @@ class Worker:
         self.started = started
         self.deadline = deadline
         self.killed = False
+        self.decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        self.output = ""
 
 
 class Supervisor:
@@ -332,7 +354,7 @@ class Supervisor:
         line = json.dumps({"time": moment, "event": event, **fields}, default=str)
         # No line holds the channel secret or a worker token.
         for hidden in (self.settings.secret, *self.tokens):
-            line = line.replace(hidden, "***")
+            line = line.replace(json.dumps(hidden)[1:-1], "***")
         print(line, file=self.out, flush=True)
 
     # --------------------------------------------------------------- the loop
@@ -404,7 +426,10 @@ class Supervisor:
         if reply.assignments:
             run_id = reply.assignments[0].run_id
             if self.run_id is not None and run_id != self.run_id:
-                self._sweep()
+                if not self._sweep():
+                    return
+            if self.stop_requested_at is not None:
+                return  # SIGTERM can also arrive during the sweep.
             self.run_id = run_id
         self._start_workers()
 
@@ -440,9 +465,10 @@ class Supervisor:
                 cwd=directory,
                 env=self._worker_environment(assignment, directory),
                 stdin=subprocess.DEVNULL,
-                # Standard output is for the log of the Supervisor only, so the
-                # output of a worker goes to standard error (file descriptor 2).
-                stdout=2,
+                # Capture stdout and stderr so ordinary worker output is JSON
+                # data in worker_output events in the merged container log.
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 # Thus only the Supervisor sends a signal to a worker.
                 start_new_session=True,
             )
@@ -461,6 +487,7 @@ class Supervisor:
         self.workers[assignment.job_id] = Worker(
             assignment, process, directory, now, self.run_deadline
         )
+        os.set_blocking(process.stdout.fileno(), False)
         self.log(
             "worker_start",
             job_id=assignment.job_id,
@@ -493,10 +520,12 @@ class Supervisor:
 
     def _collect_exits(self):
         for worker in list(self.workers.values()):
+            self._read_worker_output(worker)
             code = worker.process.poll()
             if code is None:
                 continue
             self._kill_replay(worker)  # each process of the Replay that is left
+            self._read_worker_output(worker, final=True)
             self._delete(worker.directory)
             del self.workers[worker.job_id]
             self.log(
@@ -505,6 +534,57 @@ class Supervisor:
                 exit_code=code,
                 seconds=round(self.clock.now() - worker.started, 1),
             )
+
+    def _read_worker_output(self, worker, *, final=False):
+        pipe = worker.process.stdout
+        if pipe.closed:
+            return
+        eof = False
+        for _ in range(OUTPUT_READS_PER_TICK):
+            try:
+                data = os.read(pipe.fileno(), OUTPUT_CHUNK_BYTES)
+            except BlockingIOError:
+                break
+            if not data:
+                eof = True
+                break
+            worker.output += worker.decoder.decode(data)
+            self._log_worker_output(worker)
+        if eof or final:
+            if final and not eof:
+                try:
+                    if os.read(pipe.fileno(), 1):
+                        self.log("worker_output_truncated", job_id=worker.job_id)
+                except BlockingIOError:
+                    pass
+            worker.output += worker.decoder.decode(b"", final=True)
+            self._log_worker_output(worker, final=True)
+            # A detached process may still hold the pipe. Never wait for it.
+            pipe.close()
+
+    def _log_worker_output(self, worker, *, final=False):
+        # Retain a suffix so a credential split across reads is still redacted.
+        secrets = (self.settings.secret, *self.tokens)
+        pattern = re.compile("|".join(
+            re.escape(value) for value in sorted(secrets, key=len, reverse=True)
+        ))
+        while worker.output:
+            length = len(worker.output)
+            limit = length if final else max(0, length - max(map(len, secrets)) + 1)
+            limit = min(limit, OUTPUT_CHUNK_BYTES)
+            if not limit:
+                break
+            # Consume a complete match at the boundary, then redact it before
+            # writing. Even a credential longer than a chunk stays bounded.
+            for match in pattern.finditer(worker.output):
+                if match.start() >= limit:
+                    break
+                limit = max(limit, match.end())
+            text = pattern.sub("***", worker.output[:limit])
+            self.log("worker_output", job_id=worker.job_id, text=text)
+            worker.output = worker.output[limit:]
+            if not final:
+                break
 
     def _kill_after_deadline(self):
         now = self.clock.now()
@@ -550,23 +630,51 @@ class Supervisor:
     def _sweep(self):
         """Before the first worker of a new Run: leave nothing of the Run before it."""
         self._kill_workers()
-        processes = send_kill(processes_to_sweep(self.proc_path, os.getpid()))
-        self._delete_private_directories()
-        entries = 0
-        for directory in self.runtime_directories:
-            entries += self._empty(directory)
-        self.log("sweep", processes=processes, entries=entries)
+        end = self.clock.now() + SWEEP_SECONDS
+        killed = set()
+        quiet = 0
+        try:
+            while quiet < 2:
+                processes = processes_to_sweep(self.proc_path, os.getpid())
+                quiet = 0 if processes else quiet + 1
+                if processes:
+                    send_kill(processes)
+                    killed.update(processes)
+                if quiet == 2:
+                    break
+                if self.clock.now() >= end:
+                    raise OSError("processes remain after sweep deadline")
+                self.clock.sleep(SWEEP_INTERVAL_SECONDS)
+            entries = self._empty(self.replays, strict=True)
+            for directory in self.runtime_directories:
+                entries += self._empty(directory, strict=True)
+        except (OSError, ValueError, IndexError) as error:
+            self.log("sweep_failed", error=f"{type(error).__name__}: {error}")
+            self._exit(EXIT_CLEANUP, "cleanup failed")
+            return False
+        self.log("sweep", processes=len(killed), entries=entries)
+        return True
 
     def _delete_private_directories(self):
         self._empty(self.replays)
 
-    def _empty(self, directory):
+    def _empty(self, directory, *, strict=False):
         """Delete each entry of a directory. Return the number of deleted entries."""
         try:
             entries = list(os.scandir(directory))
-        except OSError:
+        except FileNotFoundError:
             return 0  # The directory does not exist here.
-        return sum(self._delete(entry.path) for entry in entries)
+        except OSError:
+            if strict:
+                raise
+            return 0
+        deleted = 0
+        for entry in entries:
+            if self._delete(entry.path):
+                deleted += 1
+            elif strict and os.path.lexists(entry.path):
+                raise OSError(f"could not delete {entry.path}")
+        return deleted
 
     def _delete(self, path):
         """Delete a file or a directory. A delete that fails gets a log entry."""
