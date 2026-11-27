@@ -115,6 +115,8 @@ class Backend:
         self.reply = (200, {"run_deadline": None, "assignments": []})
         self.delay = 0
         self.during = None  # what happens while the Supervisor waits for the reply
+        self.redirect = None
+        self.redirect_requests = []
         backend = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -129,8 +131,14 @@ class Backend:
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
+                if backend.redirect:
+                    self.send_header("Location", backend.redirect)
                 self.end_headers()
                 self.wfile.write(data)
+
+            def do_GET(self):
+                backend.redirect_requests.append((self.path, self.headers.get("Authorization")))
+                self.send_error(404)
 
             def log_message(self, *args):
                 pass
@@ -311,6 +319,15 @@ class SupervisorCase(unittest.TestCase):
 
 
 class PollTest(SupervisorCase):
+    def test_a_redirect_fails_the_poll_without_forwarding_the_secret(self):
+        self.backend.reply = (302, {"detail": "redirect"})
+        self.backend.redirect = self.backend.url + "/redirect-target"
+        item = self.supervisor()
+        item.step()
+        self.assertEqual(self.backend.redirect_requests, [])
+        self.assertIn("status 302", self.events("poll_failed")[0]["error"])
+        self.assertIsNone(item.exit_code)
+
     def test_a_poll_has_the_url_the_header_and_the_body(self):
         self.supervisor().step()
         self.assertEqual(
@@ -1020,6 +1037,50 @@ class EnvironmentTest(SupervisorCase):
                 with self.subTest(name=name, value=value):
                     code, line = self.exit_of(**{name: value})
                     self.assertEqual((code, line["variable"]), (2, name))
+
+    def test_remote_http_urls_exit_before_sending_any_poll(self):
+        urls = (
+            "http://example.com/evalve",
+            "http://example.com:443/evalve",
+            "http://192.168.1.10/evalve",
+            "http://[2001:db8::1]/evalve",
+            "http://localhost.example.com/evalve",
+            "http://127.0.0.1.example.com/evalve",
+            "http://localhost@example.com/evalve",
+        )
+        for name in ("EVALVE_BACKEND_URL", "KITARU_API_URL"):
+            for url in urls:
+                with self.subTest(name=name, url=url):
+                    out = io.StringIO()
+                    # Test startup validation without ever entering the poll
+                    # loop, including when this regression fails on old code.
+                    with patch.object(supervisor.Supervisor, "run", return_value=99) as run:
+                        code = supervisor.main(self.environ(**{name: url}), out=out,
+                                               **self.options())
+                    self.assertEqual(code, 2)
+                    run.assert_not_called()
+                    line = json.loads(out.getvalue())
+                    self.assertEqual((code, line["variable"], line["reason"]),
+                                     (2, name, "environment"))
+        self.assertEqual(self.backend.requests, [])
+
+    def test_https_and_local_http_urls_are_accepted_for_both_settings(self):
+        urls = (
+            "https://example.com/evalve",
+            "https://192.168.1.10/evalve",
+            "http://localhost:8000/evalve",
+            "http://LOCALHOST:8000/evalve",
+            "http://127.0.0.1:8000/evalve",
+            "http://127.0.0.2:8000/evalve",
+            "http://[::1]:8000/evalve",
+        )
+        for url in urls:
+            with self.subTest(url=url):
+                settings = supervisor.Settings(self.environ(
+                    EVALVE_BACKEND_URL=url, KITARU_API_URL=url,
+                ))
+                self.assertEqual(settings.backend_url, url)
+                self.assertEqual(settings.kitaru_api_url, url)
 
 
 class LogTest(SupervisorCase):

@@ -11,6 +11,7 @@ The design is ADR 0006 point 13, parts "Claim", "Life" and "Isolation".
 import codecs
 import errno
 import http.client
+import ipaddress
 import json
 import math
 import os
@@ -109,6 +110,13 @@ def _url(environ, name):
         raise SettingsError(name) from None
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise SettingsError(name)
+    if parts.scheme == "http" and parts.hostname != "localhost":
+        try:
+            loopback = ipaddress.ip_address(parts.hostname).is_loopback
+        except ValueError:
+            loopback = False
+        if not loopback:
+            raise SettingsError(name)
     return text
 
 
@@ -181,6 +189,13 @@ class PollFailed(Exception):
     """Each other error of a poll. It changes nothing."""
 
 
+class PollRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Keep credentials on the configured endpoint, including across schemes."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # A redirect is a failed poll, without another request.
+
+
 def poll(settings, last, timeout=POLL_TIMEOUT_SECONDS):
     """Send one poll. Return a Reply, or raise Refused or PollFailed."""
     try:
@@ -193,7 +208,8 @@ def poll(settings, last, timeout=POLL_TIMEOUT_SECONDS):
             },
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        opener = urllib.request.build_opener(PollRedirectHandler())
+        with opener.open(request, timeout=timeout) as response:
             return Reply(json.loads(response.read()))
     except urllib.error.HTTPError as error:
         error.close()
