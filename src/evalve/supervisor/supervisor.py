@@ -156,7 +156,9 @@ class Assignment:
 
 def _field(item, name):
     value = item[name]
-    if not isinstance(value, str) or not value:
+    # These strings become paths and process environment values. Reject NUL,
+    # other controls and lone surrogates while a bad reply is still a failed poll.
+    if not isinstance(value, str) or not value or not value.isprintable():
         raise ValueError(name)
     return value
 

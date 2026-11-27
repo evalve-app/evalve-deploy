@@ -395,6 +395,37 @@ class PollTest(SupervisorCase):
                 self.assertEqual(len(self.backend.requests), polls + 2)
         self.assertEqual(self.starts("a"), 1)
 
+    def test_invalid_assignment_strings_fail_the_poll_without_changing_workers(self):
+        self.assign("a")
+        item = self.supervisor()
+        item.step()
+        pid = self.record("a")["pid"]
+        assignments = item.assignments
+        deadline = item.run_deadline
+        tokens = set(item.tokens)
+        for field in ("job_id", "worker_id", "worker_token", "run_id"):
+            for character in ("\0", "\x01", "\n", "\x7f", "\ud800", "\udfff"):
+                with self.subTest(field=field, character=repr(character)):
+                    self.assign("new", run="run-2")
+                    self.backend.reply[1]["assignments"][0][field] = f"bad{character}value"
+                    failures = len(self.events("poll_failed"))
+                    self.after(item, 2)
+                    self.assertEqual(len(self.events("poll_failed")), failures + 1)
+                    self.assertIs(item.assignments, assignments)
+                    self.assertEqual(item.run_deadline, deadline)
+                    self.assertEqual(item.run_id, "run-1")
+                    self.assertEqual(item.tokens, tokens)
+                    self.assertEqual(item.started_jobs, {"a"})
+                    self.assertTrue(alive(pid))
+                    self.assertIsNone(item.exit_code)
+                    self.assertEqual(self.events("sweep"), [])
+                    self.assertEqual(self.starts("new"), 0)
+        # The next valid reply is still processed normally.
+        self.assign("a")
+        self.after(item, 2)
+        self.assertEqual(self.starts("a"), 1)
+        self.assertTrue(alive(pid))
+
 
 class WorkerTest(SupervisorCase):
     def test_with_3_assignments_and_n_2_the_third_starts_after_one_exits(self):
