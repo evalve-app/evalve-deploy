@@ -155,7 +155,11 @@ def power_change(aws: Aws, action: str) -> None:
             print(f"Evalve dashboard: {dashboard_url}")
     else:
         print("Draining Kitaru before stopping EC2…", flush=True)
-        power.stop(aws, outputs["instance_id"])
+        power.stop(
+            aws,
+            outputs["instance_id"],
+            cluster=outputs.get("ecs_cluster_name"),
+        )
         print("EC2 is stopped. Run evalve start to resume at the same URL.")
 
 
@@ -207,7 +211,9 @@ def new_shutdown(aws: Aws, state: dict, server: dict, database: dict) -> dict:
     }
 
 
-def save_backup(aws: Aws, operation: dict, database: dict) -> None:
+def save_backup(
+    aws: Aws, operation: dict, database: dict, *, cluster: str | None = None
+) -> None:
     snapshot_id = operation["snapshot_id"]
     instance_id = operation["instance_id"]
     snapshot = backup.get_snapshot(aws, snapshot_id) if snapshot_id else None
@@ -222,7 +228,7 @@ def save_backup(aws: Aws, operation: dict, database: dict) -> None:
                 )
         else:
             print("Draining and stopping EC2 before the database snapshot…", flush=True)
-            power.stop(aws, instance_id, allow_gone=True)
+            power.stop(aws, instance_id, allow_gone=True, cluster=cluster)
     if not snapshot_id:
         return
     key = backup.snapshot_key(snapshot_id)
@@ -301,7 +307,9 @@ def down(aws: Aws, directory: Path) -> None:
         database and database.get("resource_id") != operation["database_resource_id"]
     ):
         raise EvalveError("The deployment no longer matches the shutdown checkpoint.")
-    save_backup(aws, operation, database)
+    outputs = (state or {}).get("outputs", {})
+    cluster = outputs.get("ecs_cluster_name", {}).get("value")
+    save_backup(aws, operation, database, cluster=cluster)
     if resources:
         config = dict(
             operation["configuration"], account_id=aws.account, region=aws.region

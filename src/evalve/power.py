@@ -203,7 +203,13 @@ def start(aws: Aws, instance_id: str) -> None:
     run_server_command(aws, instance_id, START)
 
 
-def stop(aws: Aws, instance_id: str, *, allow_gone: bool = False) -> None:
+def stop(
+    aws: Aws,
+    instance_id: str,
+    *,
+    allow_gone: bool = False,
+    cluster: str | None = None,
+) -> None:
     state = instance_state(aws, instance_id, allow_gone=allow_gone)
     if state == "stopped" or (allow_gone and state == "terminated"):
         return
