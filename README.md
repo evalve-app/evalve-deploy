@@ -7,7 +7,7 @@ Evalve deploys one shared Kitaru server to AWS. The operator uses the Evalve CLI
 
 ## Operator setup
 
-Install Python 3.11+, uv, and AWS CLI v2 on your workstation.
+Install Python 3.11.4+, uv, and AWS CLI v2 on your workstation.
 
 ### Install Terraform
 
@@ -94,6 +94,117 @@ evalve up --no-loop-task-ports       # back to TCP 443 only
 
 The flags replace the saved list. A plain `up` keeps the list, and `down` and `up --restore` keep it too. Only the instance role can assume the push-only role, which can push an image and cannot delete one.
 
+## Build an agent image locally
+
+Teammates and the Operator use `evalve build` from a clean clone of the agent
+repository. It requires Python 3.11.4+, Git, and Docker with a running daemon, or
+Podman when Docker is absent from `PATH`. It needs no AWS profile, AWS CLI or
+Terraform. Docker being installed but unavailable is an error; the command
+does not switch engines in that case.
+
+```sh
+export KITARU_API_URL=https://kitaru.example.com
+evalve build --agent my-agent \
+  --command 'uv run --no-sync python -m app.kitaru_entry' \
+  --no-push
+```
+
+This version requires `--no-push`. It prints a local image name such as
+`evalve-agent-image:abc123def456-20261127153000` and
+"Nothing was pushed and nothing was registered." Push and registration are
+the next part of the command. Even a local build needs the server's public
+`/api/v1/info` endpoint and pulls its matching worker base image. It sends no
+API credential. The version request times out after 15 seconds.
+
+The context is `git archive` of the current commit, from the repository root.
+Commit or remove pending changes first; ignored, untracked files such as a
+local `.env` are excluded. Submodules and Git LFS files are currently refused.
+The Dockerfile is trusted project code and may download dependencies: this
+certifies the committed context and the worker checks, not reproducibility.
+
+The team's Dockerfile must:
+
+- Start from `zenmldocker/kitaru-worker:<server version>`. The base layers must
+  remain in order. Builds target `linux/amd64`, including on ARM machines.
+- Install `kitaru[cli]` at that exact version in `/app/.venv`. Both the package
+  version and `kitaru worker start --help` must work. If the commit has a
+  `uv.lock`, every `kitaru` entry must match the server version too.
+- Give `/app`, its contents, the working directory and its parents to root,
+  without write access for uid 1000. For example, use `USER root`, copy source
+  with `COPY --chown=root:root . /app`, install dependencies, then
+  `RUN chown -R root:root /app && chmod -R go-w /app`.
+- Keep `.env` files out of the source and keep `/usr/bin/timeout` and
+  `/usr/local/bin/python3` executable. The working directory must exist.
+
+Evalve adds the Supervisor from the installed CLI as the final layer, locks
+`/tmp`, `/var/tmp`, `/run/lock`, `/home/kitaru` and their contents, and creates
+`/tmp/evalve` owned by uid 1000 with mode 0700. Only `/tmp/evalve` in the image
+may be writable by the worker user. Other writable image locations are a
+refusal: correct their ownership and modes in the team's Dockerfile. The
+engine creates `/dev/shm` and `/dev/mqueue` at runtime; the Supervisor clears
+them between Runs. The final layer does not fix writable source files.
+
+Each check runs as uid 1000 with networking disabled and a 60-second timeout.
+Unexpected failures refuse the image. The image build itself remains
+cancellable and has no fixed timeout. The base-image pull and both image builds
+stream engine output live, including anything the Dockerfile prints. Check-container output stays
+captured. Source-tree checks use `find` without following symlinks.
+Evalve removes its temporary files,
+check containers and intermediate image references on success, failure or
+interruption, while retaining the successful named image, pulled base and
+normal engine cache. Cleanup failures produce a nonzero exit and identify
+resources needing removal, including the final image name if one was kept.
+
+Options:
+
+| Flag | Meaning |
+| --- | --- |
+| `--dockerfile PATH` | Path within the commit, from its root; default `Dockerfile`. |
+| `--working-dir DIR` | Absolute directory in the image; default `/app`. |
+| `--env-file PATH` | `NAME=value` lines, read only for `KITARU_API_URL` and `KITARU_API_KEY`. Environment variables win, including empty ones. No shell expansion or quoting is performed. |
+| `--timeout-seconds N` | Positive integer for the future run spec, not the build or checks. |
+| `--tool TOOL` | Future capability; repeatable, duplicates removed in order. |
+| `--secret NAME` | Future Kitaru secret; repeatable, duplicates removed in order. Local builds read no secret values. |
+| `--env NAME=value` | Future plain run-spec value; repeatable. Empty values are allowed; duplicate names and names also used as secrets are refused. |
+
+Both environment and secret names must avoid the reserved prefixes `EVALVE_`
+and `KITARU_`. The future run-spec options are validated now but are not passed
+to the build or checks. A command starting `uv run` must include `--no-sync`
+among uv's options; an explicit environment Python such as
+`/app/.venv/bin/python -m app.kitaru_entry` is also accepted. This catches a
+known sync mistake; it does not prove an arbitrary command cannot sync.
+
+To start the final image locally, export `EVALVE_BACKEND_URL`, `EVALVE_LOOP_ID`,
+`EVALVE_LOOP_TASK_SECRET` and `KITARU_API_URL`. Use a real Loop ID and the secret
+issued for its Loop task. Substitute the printed image name below. The four
+numeric settings are example positive values:
+
+```sh
+docker run --rm --init --platform linux/amd64 \
+  -e EVALVE_BACKEND_URL -e EVALVE_LOOP_ID \
+  -e EVALVE_LOOP_TASK_SECRET -e KITARU_API_URL \
+  -e EVALVE_MAX_REPLAYS=1 -e EVALVE_POLL_INTERVAL_SECONDS=2 \
+  -e EVALVE_IDLE_TIMEOUT_SECONDS=300 -e EVALVE_SOFT_LIFETIME_SECONDS=3600 \
+  evalve-agent-image:<printed-tag>
+```
+
+Both URLs must be reachable from the container and use HTTPS. HTTP is accepted
+only when its hostname is exactly `localhost` or a literal loopback IP. For a
+backend on the builder's laptop, use a container-reachable HTTPS endpoint or a
+network mode that makes the backend reachable on the container's loopback.
+`http://host.docker.internal` is refused. The Supervisor's entrypoint is already
+in the image. On an Apple
+Silicon Mac, Docker Desktop's x86 emulator (Rosetta) may exit with code 133
+when a container program reads `/proc/<pid>/cmdline`: Rosetta tries to write
+under the locked `/tmp`. Fargate Loop tasks have no emulator. Podman uses the
+same command forms; its layer/digest parity still needs a real-engine check
+on a machine with Podman installed.
+
+When a cached multi-platform tag inspects as ARM despite an AMD64 pull,
+Evalve requests `image inspect --platform linux/amd64`. An engine that cannot
+resolve the AMD64 image is refused; update the engine or remove the conflicting
+cached platform. Evalve never compares base layers from different architectures.
+
 ## Upgrade the backend or the dashboard
 
 Both are pinned in `src/evalve/cli.py`, so an upgrade is a pull request:
@@ -128,7 +239,17 @@ If teardown is interrupted, rerun `down` to use the same snapshot. If restoratio
 scripts/check.sh
 ```
 
-The script runs the Python unit tests and the Terraform format, validate and test commands. It stops at the first failure. The `Local checks` GitHub Actions workflow runs the same script on every push and pull request. To run it before each commit, enable the hook one time per clone:
+The script runs the Python unit tests and the Terraform format, validate and test commands. It stops at the first failure. The `Local checks` GitHub Actions workflow runs the same script on every push and pull request.
+
+The real-engine test intentionally runs automatically whenever Docker or
+Podman is on `PATH`, including in CI. The engine must be running. It pulls
+`python:3.11-slim` from Docker Hub and builds an AMD64 fixture, so it needs
+registry access and uses emulation on an ARM machine. A registry outage or
+rate limit can fail this check. When neither engine is installed, only this
+test is skipped. Run it on its own with
+`PYTHONPATH=src python3 -m unittest discover -s tests -p test_build_engine.py`.
+
+To run all checks before each commit, enable the hook one time per clone:
 
 ```sh
 git config core.hooksPath .githooks

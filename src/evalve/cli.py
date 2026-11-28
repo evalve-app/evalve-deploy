@@ -11,7 +11,7 @@ import subprocess
 import sys
 from decimal import Decimal
 
-from evalve import EvalveError, lifecycle, power, terraform
+from evalve import EvalveError, build, lifecycle, power, terraform
 from evalve.aws import AGENT_IMAGE_REPOSITORY, Aws, read_application_secret
 from evalve.readiness import wait_for_backend, wait_for_dashboard, wait_for_kitaru
 
@@ -110,6 +110,7 @@ def parser() -> argparse.ArgumentParser:
         description="Deploy a shared Kitaru server on AWS."
     )
     commands = result.add_subparsers(dest="command", required=True)
+    build.add_parser(commands)
     up = commands.add_parser("up", help="Create or update the shared deployment.")
     for command in (
         up,
@@ -425,7 +426,9 @@ def credentials(aws: Aws) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
-        if args.command == "up":
+        if args.command == "build":
+            build.build(args)
+        elif args.command == "up":
             up(args)
         else:
             check_tools(needs_terraform=args.command == "down")
