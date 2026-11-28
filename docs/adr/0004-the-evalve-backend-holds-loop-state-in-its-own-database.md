@@ -8,6 +8,8 @@ Updated on 2026-11-24 by [sc-394](https://app.shortcut.com/team-4-1/story/394): 
 
 Updated on 2026-11-25 by [sc-233](https://app.shortcut.com/team-4-1/story/233): point 3 names the correct secret and points to ADR 0005, which also changes point 2 (a setup step of the deployment makes the database) and closes two consequences.
 
+Updated on 2026-11-28 by [sc-556](https://app.shortcut.com/team-4-1/story/556): the live AWS check confirmed the instance role's task-definition family limit and explicit deny of ECS Exec. The first consequence now names the permitted families.
+
 ADR 0002 said that Evalve deploys no Loop state API, because Kitaru stores all that an MVP Loop needs. The epic [01 Agent-driven Loops on AWS](https://app.shortcut.com/team-4-1/epic/26) changes that: a Teammate's coding agent runs a Loop through the Evalve MCP, and one service must own the Loop rules and keep the state between calls. Kitaru cannot hold that state. We decided to run the Evalve backend as a container on the existing EC2 host, with its own database on the PostgreSQL server of Kitaru, and with no credential of its own for Kitaru. We chose this because it adds one container and one database to the deployment, and no host, no secret and no account.
 
 The terms Loop, Experiment, Run and Evalve backend are in `GLOSSARY.md`.
@@ -35,7 +37,7 @@ The terms Loop, Experiment, Run and Evalve backend are in `GLOSSARY.md`.
 
 ## Consequences
 
-* **The backend container can read the credentials of the instance role.** With the host network, IMDS is one hop from the container. The Kitaru and UI containers cannot reach IMDS. This is acceptable only because the backend runs Evalve code and never agent code. Do not run agent code in this container. From the epic "Experiments on Fargate", the backend uses that role to start and stop Loop tasks, to register task definitions and to give ECR push tokens. The role can register any task definition in the account.
+* **The backend container can read the credentials of the instance role.** With the host network, IMDS is one hop from the container. The Kitaru and UI containers cannot reach IMDS. This is acceptable only because the backend runs Evalve code and never agent code. Do not run agent code in this container. From the epic "Experiments on Fargate", the backend uses that role to start and stop Loop tasks, to register task definitions and to give ECR push tokens. The role can register task definitions only in families matching `evalve-loop-task-*` in the deployment account and region. The live AWS check in [sc-556](https://app.shortcut.com/team-4-1/story/556) confirmed this limit and the explicit deny of running tasks with ECS Exec enabled.
 * **The backend can read and write the tables of Kitaru** while it uses the PostgreSQL user of Kitaru (point 3). The code does not do so. ADR 0005 closes this with a separate role.
 * That PostgreSQL user must be allowed to create a database. With ADR 0005, the role of the backend needs no such right.
 * A Loop moves only on a call from its Loop owner. A call with a Bearer credential drives it, and a dashboard session refreshes it. A Run in flight finishes in Kitaru, and the next call from the Loop owner collects it. A different account that reads the Loop gets the stored state, which can be older than the state in Kitaru.

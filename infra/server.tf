@@ -88,8 +88,8 @@ resource "aws_iam_role_policy" "loop_tasks" {
         Condition = { StringEquals = { "ecs:CreateAction" = "RunTask" } }
       },
       {
-        # The family prefix is a placeholder until a test on AWS confirms that
-        # AWS applies it (sc-254).
+        # The live AWS check in sc-556 confirmed that this family prefix is
+        # enforced: evalve-loop-task-test passed and other-test was denied.
         Effect   = "Allow"
         Action   = "ecs:RegisterTaskDefinition"
         Resource = local.loop_task_definition_arns
