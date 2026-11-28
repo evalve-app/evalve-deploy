@@ -290,6 +290,16 @@ run "backend_image_is_recorded_for_restore" {
   }
 
   assert {
+    condition = (
+      strcontains(aws_instance.server.user_data, "ConditionPathExists=/etc/evalve/backend-settings.env") &&
+      strcontains(aws_instance.server.user_data, "--env-file /etc/evalve/backend-settings.env") &&
+      !strcontains(aws_instance.server.user_data, "EVALVE_EXECUTOR=") &&
+      !strcontains(aws_instance.server.user_data, "EVALVE_LOOP_TASK_SUBNET=")
+    )
+    error_message = "The backend unit must load the Fargate settings file supplied by up."
+  }
+
+  assert {
     condition = strcontains(aws_instance.server.user_data, join("\n", [
       "203-0-113-10.sslip.io {",
       "  handle /evalve/* {",

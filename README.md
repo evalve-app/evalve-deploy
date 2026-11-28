@@ -77,6 +77,8 @@ The backend logs in as its own role, `evalve`, which can't reach Kitaru's databa
 
 The first `up` after this version replaces EC2 once on every deployment, including those without a backend. Expect a brief outage. The URL and the RDS data stay.
 
+For deployments with a backend, `evalve up` writes the Fargate settings to `/etc/evalve/backend-settings.env` over Systems Manager. The first `up` with the new backend unit replaces the EC2 instance once because the unit is defined in instance user data. Later settings changes restart only the backend.
+
 ## Loop tasks and agent images
 
 A deployment with a backend also gets what a Loop task needs (ADR 0006 point 13, and `GLOSSARY.md` for the term). A deployment with no backend gets none of this.

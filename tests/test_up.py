@@ -103,15 +103,26 @@ class UpTest(unittest.TestCase):
         aws.ensure_agent_image_repository.return_value = immutable_repository
         self.repository_checked_before_apply = None
 
-        def applied(*a):
+        def applied(_aws, _directory, variables):
             self.repository_checked_before_apply = (
                 aws.ensure_agent_image_repository.called
             )
-            return {
+            outputs = {
                 "url": "https://evalve.example.com",
                 "dashboard_url": "https://dashboard.evalve.example.com",
                 "instance_id": "i-0123",
             }
+            if variables["backend_image"]:
+                outputs.update(
+                    ecs_cluster_name="cluster",
+                    loop_task_subnet_id="subnet",
+                    loop_task_security_group_id="security-group",
+                    loop_task_execution_role_arn="execution-role",
+                    loop_task_log_group="log-group",
+                    agent_image_repository_url="repository",
+                    agent_image_push_role_arn="push-role",
+                )
+            return outputs
 
         output = io.StringIO()
         errors = io.StringIO()
@@ -484,7 +495,23 @@ class UpTest(unittest.TestCase):
         self.assertEqual(code, 0)
         ready.assert_called_once_with("https://evalve.example.com")
         self.deploy.assert_called_once()
-        self.assertEqual(self.deploy.call_args.args[1:], ("i-0123", self.BACKEND))
+        self.assertEqual(self.deploy.call_args.args[1:3], ("i-0123", self.BACKEND))
+        self.assertEqual(
+            self.deploy.call_args.args[3],
+            {
+                "EVALVE_EXECUTOR": "fargate",
+                "EVALVE_AWS_REGION": "us-east-1",
+                "EVALVE_PUBLIC_URL": "https://evalve.example.com/evalve",
+                "EVALVE_KITARU_PUBLIC_URL": "https://evalve.example.com",
+                "EVALVE_ECS_CLUSTER": "cluster",
+                "EVALVE_LOOP_TASK_SUBNET": "subnet",
+                "EVALVE_LOOP_TASK_SECURITY_GROUP": "security-group",
+                "EVALVE_LOOP_TASK_EXECUTION_ROLE_ARN": "execution-role",
+                "EVALVE_LOOP_TASK_LOG_GROUP": "log-group",
+                "EVALVE_AGENT_IMAGE_REPOSITORY": "repository",
+                "EVALVE_AGENT_IMAGE_PUSH_ROLE_ARN": "push-role",
+            },
+        )
         self.backend_check.assert_called_once_with(
             "https://evalve.example.com", self.BACKEND
         )
@@ -552,7 +579,7 @@ class UpTest(unittest.TestCase):
         )
         self.assertFalse(apply.call_args.args[2]["backend_image_pinned"])
         self.assertEqual(
-            self.deploy.call_args.args[1:], ("i-0123", cli.DEFAULT_BACKEND_IMAGE)
+            self.deploy.call_args.args[1:3], ("i-0123", cli.DEFAULT_BACKEND_IMAGE)
         )
 
     def test_default_flag_value_is_accepted(self):
@@ -579,7 +606,7 @@ class UpTest(unittest.TestCase):
         self.assertEqual(apply.call_args.args[2]["backend_image"], self.NEW_BACKEND)
         self.assertIn(self.IN_PLACE, output)
         self.assertNotIn(self.REPLACES, output)
-        self.assertEqual(self.deploy.call_args.args[1:], ("i-0123", self.NEW_BACKEND))
+        self.assertEqual(self.deploy.call_args.args[1:3], ("i-0123", self.NEW_BACKEND))
 
     def test_same_backend_or_none_saved_gives_no_warning(self):
         for args, saved, shown in (
@@ -611,7 +638,7 @@ class UpTest(unittest.TestCase):
         self.assertEqual(apply.call_args.args[2]["backend_image"], self.BACKEND)
         self.assertNotIn(self.REPLACES, output)
         # A new server gets its image from up, not from user_data.
-        self.assertEqual(self.deploy.call_args.args[1:], ("i-0123", self.BACKEND))
+        self.assertEqual(self.deploy.call_args.args[1:3], ("i-0123", self.BACKEND))
 
     def test_backend_image_tag_is_refused_before_aws(self):
         with (
