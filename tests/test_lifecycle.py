@@ -280,6 +280,28 @@ class PowerTest(unittest.TestCase):
         )
 
 
+    def test_stop_rechecks_ecs_after_ec2_has_stopped(self):
+        for state in ("stopped", "stopping", "terminated"):
+            with self.subTest(state=state):
+                aws = Mock()
+                with (
+                    patch.object(power, "instance_state", return_value=state),
+                    patch.object(power, "run_server_command") as command,
+                    patch.object(power, "drain_loop_tasks", return_value=1) as drain,
+                ):
+                    self.assertEqual(
+                        power.stop(aws, INSTANCE, allow_gone=True, cluster="evalve"), 1
+                    )
+                command.assert_not_called()
+                drain.assert_called_once_with(aws, "evalve", action="stop")
+                if state == "stopping":
+                    aws.call.assert_called_once_with(
+                        "ec2", "wait", "instance-stopped", "--instance-ids", INSTANCE
+                    )
+                else:
+                    aws.call.assert_not_called()
+
+
 class BackupTest(unittest.TestCase):
     def setUp(self):
         self.aws = Mock(account=ACCOUNT, region=REGION)
@@ -472,6 +494,25 @@ class ShutdownTest(unittest.TestCase):
         self.assertEqual(self.events.count("snapshot"), 1)
         self.assertEqual(self.events.count("verify"), 2)
         self.assertEqual(self.events.count("drain"), 1)
+
+    def test_down_rechecks_ecs_before_resuming_destroy_with_saved_snapshot(self):
+        with self.assertRaisesRegex(EvalveError, "Terraform interrupted"):
+            self.invoke(destroy_fails=True)
+        self.documents[STATE_KEY]["outputs"]["ecs_cluster_name"] = {"value": "evalve"}
+
+        def drain(aws, cluster, *, action):
+            self.assertIs(aws, self.aws)
+            self.assertEqual((cluster, action), ("evalve", "down"))
+            self.events.append("ecs retry")
+            return 1
+
+        self.events.clear()
+        with patch.object(power, "drain_loop_tasks", side_effect=drain):
+            output = self.invoke()
+        self.assertLess(self.events.index("ecs retry"), self.events.index("destroy"))
+        self.assertNotIn("drain", self.events)
+        self.assertNotIn("snapshot", self.events)
+        self.assertIn("Loop tasks stopped: 1", output)
 
     def test_backend_image_is_saved_for_restore(self):
         image = "ghcr.io/evalve-app/evalve-backend@sha256:" + "0" * 64

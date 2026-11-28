@@ -295,7 +295,7 @@ def stop(
 ) -> int:
     state = instance_state(aws, instance_id, allow_gone=allow_gone)
     if state == "stopped" or (allow_gone and state == "terminated"):
-        return 0
+        return drain_loop_tasks(aws, cluster, action=action) if cluster else 0
     if state == "pending":
         aws.call("ec2", "wait", "instance-running", "--instance-ids", instance_id)
         state = "running"
@@ -312,4 +312,6 @@ def stop(
     elif state != "stopping":
         raise EvalveError(f"Cannot stop the recorded EC2 instance in state {state}.")
     aws.call("ec2", "wait", "instance-stopped", "--instance-ids", instance_id)
+    if state == "stopping" and cluster:
+        return drain_loop_tasks(aws, cluster, action=action)
     return stopped

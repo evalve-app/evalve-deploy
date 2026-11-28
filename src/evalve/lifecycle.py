@@ -220,22 +220,23 @@ def save_backup(
     snapshot_id = operation["snapshot_id"]
     instance_id = operation["instance_id"]
     snapshot = backup.get_snapshot(aws, snapshot_id) if snapshot_id else None
-    if instance_id:
-        if snapshot:
-            if power.instance_state(aws, instance_id, allow_gone=True) not in {
-                "stopped",
-                "terminated",
-            }:
-                raise EvalveError(
-                    "EC2 is running after the saved snapshot. Resolve the out-of-band restart before retrying down."
-                )
-        else:
-            print("Draining and stopping EC2 before the database snapshot…", flush=True)
-            stopped = power.stop(
-                aws, instance_id, allow_gone=True, cluster=cluster, action="down"
+    if instance_id and snapshot:
+        if power.instance_state(aws, instance_id, allow_gone=True) not in {
+            "stopped",
+            "terminated",
+        }:
+            raise EvalveError(
+                "EC2 is running after the saved snapshot. Resolve the out-of-band restart before retrying down."
             )
-            if cluster:
-                print(f"Loop tasks stopped: {stopped}")
+    if instance_id and not snapshot:
+        print("Draining and stopping EC2 before the database snapshot…", flush=True)
+        stopped = power.stop(
+            aws, instance_id, allow_gone=True, cluster=cluster, action="down"
+        )
+    else:
+        stopped = power.drain_loop_tasks(aws, cluster, action="down") if cluster else 0
+    if cluster:
+        print(f"Loop tasks stopped: {stopped}")
     if not snapshot_id:
         return
     key = backup.snapshot_key(snapshot_id)
