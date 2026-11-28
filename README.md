@@ -96,13 +96,94 @@ The flags replace the saved list. A plain `up` keeps the list, and `down` and `u
 
 Terraform also adds one policy to the instance role, for the work of the backend. With it the backend runs, stops, describes and tags Loop tasks of the cluster `evalve`, registers task definitions of the families `evalve-loop-task-*`, passes the execution role to ECS tasks, assumes the push-only role, and checks that an image is in the repository. The policy refuses a task with ECS Exec on. The role cannot list tasks.
 
-## Build an agent image locally
+## Build, push and register an agent image
 
 Teammates and the Operator use `evalve build` from a clean clone of the agent
 repository. It requires Python 3.11.4+, Git, and Docker with a running daemon, or
 Podman when Docker is absent from `PATH`. It needs no AWS profile, AWS CLI or
-Terraform. Docker being installed but unavailable is an error; the command
-does not switch engines in that case.
+Terraform, only a Kitaru API key. Docker being installed but unavailable is an
+error; the command does not switch engines in that case.
+
+The command builds the agent image of the current commit, checks it, pushes it
+to the agent image repository of the Deployment, and registers one new Kitaru
+agent version for it. The example is the pilot agent:
+
+```sh
+export KITARU_API_URL=https://kitaru.example.com
+export KITARU_API_KEY=<your Kitaru API key>
+evalve build --agent studybot \
+  --command '/app/.venv/bin/python -m app.kitaru_entry' \
+  --timeout-seconds 300 \
+  --tool search_lessons --tool get_code_example --tool get_mock_progress \
+  --secret OPENAI_API_KEY --secret DATABASE_URL \
+  --env OPENAI_MODEL=gpt-4o-mini
+```
+
+`KITARU_API_URL` and `KITARU_API_KEY` come from the environment, or from a
+file of `NAME=value` lines that `--env-file` names. The environment wins. No
+flag takes the key. Each request needs HTTPS and times out after 15 seconds.
+Plain HTTP is allowed only for exact `localhost` or a literal loopback IP,
+such as `127.0.0.1` or `::1`; other hosts, including private-network
+addresses, must use HTTPS.
+
+Before the build, the command checks what needs no image, so that a mistake
+does not cost a build:
+
+- The agent of `--agent` must exist in Kitaru. Register it with Onboarding or
+  with `kitaru agent register`.
+- Each `--secret NAME` names a Kitaru secret, which holds a value that the
+  agent needs in a Run, such as a model key. A name has letters, digits, `_`
+  and `-`, with a letter or a digit first and last.
+  - If Kitaru has the secret, the command attaches it as it is. It never reads
+    and never changes its value. A value of that name in your environment is
+    not used, and the output says so.
+  - If Kitaru does not have it, the command needs the value one time, to make
+    the secret. It takes the value from the environment variable `NAME`. With
+    no such variable, it asks for the value with a hidden prompt. With no
+    variable and no terminal, it stops. It does not read a secret value from
+    `--env-file`.
+
+After the checks of the image, the command does these steps:
+
+1. It asks the Evalve backend for a temporary password for the agent image
+   repository. The password can push to that one repository and can do
+   nothing else.
+2. It gives the password to the engine (`docker login`, on standard input),
+   pushes the image, and makes the engine forget the password
+   (`docker logout`).
+3. It makes each Kitaru secret that did not exist.
+4. It registers the agent version. The run spec holds `--command`,
+   `--working-dir`, each `--env` value, the secrets, and three values that the
+   backend reads: `EVALVE_AGENT_IMAGE_DIGEST`, `EVALVE_COMMIT` and
+   `EVALVE_SUPERVISOR_CONTRACT_VERSION`.
+
+The output names the agent, the ID and the number of the new agent version,
+the image tag, the image digest, and "found" or "made" for each secret. Each
+build registers one new agent version and changes no agent version that
+exists. The command never prints the key, the password or a secret value.
+
+Know these effects and limits:
+
+- **The engine forgets its password for the repository.** If you logged the
+  engine in to the agent image repository yourself, run your login command
+  again after the build. Nothing changes in AWS.
+- **Run one build at a time on one computer.** The build that ends first makes
+  the engine forget the password, and the push of the other build can then
+  fail.
+- **A stop after the push leaves an image with no agent version.** The command
+  then prints "The image `<tag>` is in the repository, but no agent version
+  was registered. Run the command again. It makes a new image.", the reason,
+  and the Kitaru secrets that the run made. A second run attaches those
+  secrets as they are. Nobody deletes an image through Evalve.
+- **A secret name is for the full Kitaru server,** and each Kitaru account can
+  read each secret.
+- **The local image is removed after a push,** also after a failed push, so
+  that builds do not fill the disk. The Kitaru worker image and the build
+  cache of the engine stay. `--keep-image` keeps the image as
+  `evalve-agent-image:<tag>`. This is the only way to get the pushed image on
+  your computer, because the temporary password cannot pull.
+
+### Build and check only
 
 ```sh
 export KITARU_API_URL=https://kitaru.example.com
@@ -111,15 +192,16 @@ evalve build --agent my-agent \
   --no-push
 ```
 
-This version requires `--no-push`. It prints a local image name such as
+With `--no-push`, the command builds and checks the image, and stops. It
+prints a local image name such as
 `evalve-agent-image:abc123def456-20261127153000-<32 hex UUID>` and
-"Nothing was pushed and nothing was registered." Push and registration are
-the next part of the command. Even a local build needs the server's public
-`/api/v1/info` endpoint and pulls its matching worker base image. It sends no
-API credential. The version request times out after 15 seconds and requires
-HTTPS. Plain HTTP is allowed only for exact `localhost` or a literal loopback
-IP, such as `127.0.0.1` or `::1`; other hosts, including private-network
-addresses, must use HTTPS.
+"Nothing was pushed and nothing was registered." It needs no Kitaru API key,
+sends no credential and does not look up the agent or the secrets. It still
+needs the server's public `/api/v1/info` endpoint and pulls its matching
+worker base image. `--keep-image` changes nothing here: `--no-push` always
+keeps its image.
+
+### The build context and the Dockerfile
 
 The context is `git archive` of the current commit, from the repository root.
 Commit or remove pending changes first; ignored, untracked files such as a
@@ -169,9 +251,12 @@ when protected in the team image: the final layer gives that directory to the
 worker. Keep the working directory and source targets outside that private area.
 Evalve removes its temporary files,
 check containers and intermediate image references on success, failure or
-interruption, while retaining the successful named image, pulled base and
-normal engine cache. Cleanup failures produce a nonzero exit and identify
-resources needing removal, including the final image name if one was kept.
+interruption, while retaining the pulled base and normal engine cache. The
+named local image stays with `--no-push` and with `--keep-image`. After a
+login to the agent image repository, the cleanup also makes the engine forget
+the password. Cleanup failures produce a nonzero exit and identify
+resources needing removal, including the final image name if one was kept and
+the logout command to run if the logout failed.
 On SIGTERM, SIGHUP or SIGINT, the CLI stops its active child process group and
 runs the same cleanup. Signals arriving during cleanup are deferred until all
 engine and directory removals finish; further signals do not abort cleanup.
@@ -188,21 +273,24 @@ Options:
 | `--dockerfile PATH` | Path within the commit, from its root; default `Dockerfile`. |
 | `--working-dir DIR` | Absolute directory in the image; default `/app`. |
 | `--env-file PATH` | `NAME=value` lines, read only for `KITARU_API_URL` and `KITARU_API_KEY`. Environment variables win, including empty ones. No shell expansion or quoting is performed. |
-| `--timeout-seconds N` | Positive integer for the future run spec, not the build or checks. |
-| `--tool TOOL` | Future capability; repeatable, duplicates removed in order. |
-| `--secret NAME` | Future Kitaru secret; repeatable, duplicates removed in order. Local builds read no secret values. |
-| `--env NAME=value` | Future plain run-spec value; repeatable. Empty values are allowed; duplicate names and names also used as secrets are refused. |
+| `--no-push` | Build and check only. Keep the image locally, push and register nothing. |
+| `--keep-image` | Keep the local image after a push. |
+| `--timeout-seconds N` | Positive integer for `timeout_seconds` of the run spec, not for the build or the checks. With no flag, Kitaru uses its default. |
+| `--tool TOOL` | Capability of the agent version; repeatable, duplicates removed in order. |
+| `--secret NAME` | Kitaru secret to attach; repeatable, duplicates removed in order. |
+| `--env NAME=value` | Plain value in the `env` of the run spec, which each Kitaru account can read; repeatable. Empty values are allowed; duplicate names and names also used as secrets are refused. |
 
 Both environment and secret names must avoid the reserved prefixes `EVALVE_`
-and `KITARU_`. The future run-spec options are validated now but are not passed
-to the build or checks. A command starting `uv run` must include `--no-sync`
+and `KITARU_`. With `--no-push`, the run-spec options are validated but not
+used. A command starting `uv run` must include `--no-sync`
 among uv's options; an explicit environment Python such as
 `/app/.venv/bin/python -m app.kitaru_entry` is also accepted. This catches a
 known sync mistake; it does not prove an arbitrary command cannot sync.
 
 To start the final image locally, export `EVALVE_BACKEND_URL`, `EVALVE_LOOP_ID`,
 `EVALVE_LOOP_TASK_SECRET` and `KITARU_API_URL`. Use a real Loop ID and the secret
-issued for its Loop task. Substitute the printed image name below. The four
+issued for its Loop task. Substitute the local image name that `--no-push` or
+`--keep-image` printed. The four
 numeric settings are example positive values:
 
 ```sh
@@ -269,12 +357,15 @@ scripts/check.sh
 
 The script runs the Python unit tests and the Terraform format, validate and test commands. It stops at the first failure. The `Local checks` GitHub Actions workflow runs the same script on every push and pull request.
 
-The real-engine test intentionally runs automatically whenever Docker or
-Podman is on `PATH`, including in CI. The engine must be running. It pulls
-`python:3.11-slim` from Docker Hub and builds an AMD64 fixture, so it needs
-registry access and uses emulation on an ARM machine. A registry outage or
-rate limit can fail this check. When neither engine is installed, only this
-test is skipped. Run it on its own with
+The real-engine tests intentionally run automatically whenever Docker or
+Podman is on `PATH`, including in CI. The engine must be running. The first
+pulls `python:3.11-slim` from Docker Hub and builds an AMD64 fixture, so it
+needs registry access and uses emulation on an ARM machine. The second pulls
+`registry:2`, runs it as a container on the network of the engine, pushes a
+small image to it with a real login and logout, and compares the registered
+digest with the digest that the registry gives. A registry outage or rate
+limit can fail these checks. When neither engine is installed, only these
+tests are skipped. Run them on their own with
 `PYTHONPATH=src python3 -m unittest discover -s tests -p test_build_engine.py`.
 
 To run all checks before each commit, enable the hook one time per clone:
