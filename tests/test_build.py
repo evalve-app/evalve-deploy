@@ -244,14 +244,6 @@ class BuildTest(unittest.TestCase):
         self.assertNotIn("--profile", output.getvalue())
         self.assertNotIn("--region", output.getvalue())
 
-    def test_requires_no_push_before_any_work(self):
-        args = arguments()
-        args.no_push = False
-        with self.assertRaisesRegex(EvalveError, "can only run with --no-push"):
-            build.build(args, run=self.programs, get_version=self.version)
-        self.assertEqual(self.programs.calls, [])
-        self.version.assert_not_called()
-
     def test_missing_tools_name_the_required_tool(self):
         for available, message in (([], "git"), (["git"], "docker or podman")):
             with (

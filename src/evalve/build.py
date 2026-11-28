@@ -1,4 +1,4 @@
-"""Build and validate a committed agent image without AWS credentials.
+"""Build, check and push a committed agent image without AWS credentials.
 
 The Dockerfile belongs to a trusted project. These checks enforce the worker
 contract; they do not make arbitrary Dockerfiles reproducible or safe to run.
@@ -7,7 +7,6 @@ contract; they do not make arbitrary Dockerfiles reproducible or safe to run.
 from __future__ import annotations
 
 import argparse
-import ipaddress
 import json
 import os
 import posixpath
@@ -27,10 +26,9 @@ from http.client import HTTPException
 from importlib import resources
 from pathlib import Path, PurePosixPath
 from urllib.error import URLError
-from urllib.parse import urlsplit
 from urllib.request import Request, build_opener
 
-from evalve import EvalveError
+from evalve import EvalveError, publish
 from evalve.readiness import NoRedirect
 from evalve.supervisor.supervisor import CONTRACT_VERSION
 
@@ -128,9 +126,13 @@ def positive_integer(value: str) -> int:
 
 
 def add_parser(commands) -> None:
-    command = commands.add_parser("build", help="Build and check a local agent image.")
+    command = commands.add_parser(
+        "build", help="Build, check, push and register an agent image."
+    )
     command.add_argument(
-        "--agent", required=True, help="Kitaru agent name (not looked up locally)."
+        "--agent",
+        required=True,
+        help="Kitaru agent name. The agent must exist, except with --no-push.",
     )
     command.add_argument(
         "--command",
@@ -156,17 +158,27 @@ def add_parser(commands) -> None:
     command.add_argument(
         "--no-push",
         action="store_true",
-        help="Keep the checked image locally; required in this version.",
+        help="Build and check only. Keep the image locally, push and register nothing.",
+    )
+    command.add_argument(
+        "--keep-image",
+        action="store_true",
+        help="Keep the local image after a push. --no-push always keeps it.",
     )
     command.add_argument(
         "--timeout-seconds",
         type=positive_integer,
-        help="Future run-spec timeout, not the build timeout.",
+        help="Run-spec timeout, not the build timeout.",
     )
     for name, metavar, description in (
-        ("tool", "TOOL", "Future capability; repeatable."),
-        ("secret", "NAME", "Future Kitaru secret name; repeatable. No value is read."),
-        ("env", "NAME=value", "Future plain run-spec value; repeatable."),
+        ("tool", "TOOL", "Capability of the agent version; repeatable."),
+        (
+            "secret",
+            "NAME",
+            "Kitaru secret to attach; repeatable. A new secret gets its value "
+            "from the environment variable NAME or from a hidden prompt.",
+        ),
+        ("env", "NAME=value", "Plain run-spec value; repeatable."),
     ):
         command.add_argument(
             f"--{name}", action="append", default=[], metavar=metavar, help=description
@@ -174,15 +186,13 @@ def add_parser(commands) -> None:
 
 
 def validate_inputs(args) -> None:
-    if not args.no_push:
-        raise EvalveError("This version of evalve build can only run with --no-push.")
     if not args.agent.strip():
         raise EvalveError("--agent must name a Kitaru agent.")
     tokens = shlex.split(args.agent_command)
     if not tokens:
         raise EvalveError("--command must not be empty.")
     # This is the story's narrow guard for the known uv case, not a shell or
-    # uv parser. Preserve the command verbatim for the future run spec.
+    # uv parser. Preserve the command verbatim for the run spec.
     if tokens[:2] == ["uv", "run"] and "--no-sync" not in tokens[2:]:
         raise EvalveError(
             "The command must not sync. Use uv run --no-sync … or the Python of the environment."
@@ -206,6 +216,7 @@ def validate_inputs(args) -> None:
     names = set()
     for name in args.secret:
         validate_name(name, "--secret")
+        publish.check_secret_name(name)
     for item in args.env:
         if "=" not in item:
             raise EvalveError("--env requires NAME=value.")
@@ -246,34 +257,7 @@ def read_settings(env_file: Path | None) -> dict[str, str]:
 
 
 def server_version(url: str) -> str:
-    if url.startswith(("'", '"')) or url.endswith(("'", '"')):
-        raise EvalveError(
-            "KITARU_API_URL contains literal quotes. Use KITARU_API_URL=https://… without quotes in --env-file."
-        )
-    try:
-        parts = urlsplit(url)
-    except ValueError as exc:
-        raise EvalveError("KITARU_API_URL is not a valid HTTP(S) URL.") from exc
-    if (
-        parts.scheme not in ("http", "https")
-        or not parts.hostname
-        or parts.username is not None
-        or parts.password is not None
-        or parts.query
-        or parts.fragment
-    ):
-        raise EvalveError(
-            "KITARU_API_URL must be an HTTP(S) URL without credentials, query or fragment."
-        )
-    if parts.scheme == "http" and parts.hostname != "localhost":
-        try:
-            loopback = ipaddress.ip_address(parts.hostname).is_loopback
-        except ValueError:
-            loopback = False
-        if not loopback:
-            raise EvalveError(
-                "KITARU_API_URL must use HTTPS. HTTP is allowed only for localhost or a literal loopback IP."
-            )
+    publish.check_api_url(url)
     request = Request(
         f"{url.rstrip('/')}/api/v1/info", headers={"Accept": "application/json"}
     )
@@ -890,6 +874,11 @@ def _build(args, interruptions: _BuildSignals, *, run=None, get_version=None) ->
         raise EvalveError(
             "KITARU_API_URL is missing. Set it in the environment or --env-file."
         )
+    key = settings.get("KITARU_API_KEY", "").strip()
+    if not args.no_push and not key:
+        raise EvalveError(
+            "KITARU_API_KEY is missing. Set it in the environment or --env-file, or use --no-push."
+        )
     if shutil.which("git") is None:
         raise EvalveError("Install git and put it on PATH before running evalve build.")
     engine_name = next(
@@ -901,6 +890,9 @@ def _build(args, interruptions: _BuildSignals, *, run=None, get_version=None) ->
         )
     root, commit = repository(run)
     version = get_version(url)
+    # The lookups and the hidden prompt come after each local refusal, and
+    # before the build, so that the builder does not wait for a refusal.
+    publication = None if args.no_push else publish.prepare(args, url, key)
     engine = Engine(engine_name, run)
     final_name = None
     failure = None
@@ -928,27 +920,36 @@ def _build(args, interruptions: _BuildSignals, *, run=None, get_version=None) ->
         check_final_image(engine, image)
         invocation_id = engine.prefix.removeprefix("evalve-build-")
         tag = f"{commit[:12]}-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{invocation_id}"
-        candidate = f"evalve-agent-image:{tag}"
-        existing = engine.call(
-            "image",
-            "ls",
-            "--format",
-            "{{.Repository}}:{{.Tag}}",
-            "--filter",
-            f"reference={candidate}",
-        )
-        if require_success(existing, "Checking the final tag").strip():
-            raise EvalveError(
-                f"The local image tag {candidate} already exists. Retry the build to get a new timestamp."
+        if args.no_push or args.keep_image:
+            candidate = f"evalve-agent-image:{tag}"
+            existing = engine.call(
+                "image",
+                "ls",
+                "--format",
+                "{{.Repository}}:{{.Tag}}",
+                "--filter",
+                f"reference={candidate}",
             )
-        require_success(engine.call("tag", image, candidate), "Tagging the final image")
-        final_name = candidate
+            if require_success(existing, "Checking the final tag").strip():
+                raise EvalveError(
+                    f"The local image tag {candidate} already exists. Retry the build to get a new timestamp."
+                )
+            require_success(
+                engine.call("tag", image, candidate), "Tagging the final image"
+            )
+            final_name = candidate
+        if publication is not None:
+            publish.publish(publication, engine, args, image, tag, commit)
+            # A cleanup that fails must not hide the new agent version.
+            publish.report(publication)
     except BaseException as exc:
         failure = exc
         raise
     finally:
         interruptions.cleaning = True
-        failures = engine.cleanup()
+        failures = [
+            item for item in (publish.logout(publication, engine),) if item
+        ] + engine.cleanup()
         try:
             temporary.cleanup()
         except OSError:
@@ -961,22 +962,39 @@ def _build(args, interruptions: _BuildSignals, *, run=None, get_version=None) ->
             if failures
             else ""
         )
+        # After the push, each stop gets the same text, then its reason.
+        unregistered = publish.unregistered(publication)
+        made = publish.made_secrets(publication) if unregistered else ""
         signum = interruptions.signum
         if isinstance(failure, BuildInterrupted):
             signum = failure.signum
         if signum is not None:
-            details = []
+            details = [unregistered] if unregistered else []
             if failure is not None and not isinstance(failure, BuildInterrupted):
                 details.append(f"Original failure: {failure}.")
-            details.extend(item for item in (message, retained) if item)
+            details.extend(item for item in (made, message, retained) if item)
             raise BuildInterrupted(signum, " ".join(details)) from failure
         if failures:
             message = " ".join(item for item in (message, retained) if item)
-            if failure is not None:
-                raise EvalveError(
-                    f"{failure} Cleanup also failed. {message}"
-                ) from failure
-            raise EvalveError(message)
-    print(f"Local image: {final_name}")
-    print("Nothing was pushed and nothing was registered.")
-    return final_name
+            if failure is None:
+                raise EvalveError(message)
+            reason = (
+                " ".join(item for item in (unregistered, f"Reason: {failure}", made))
+                if unregistered
+                else str(failure)
+            )
+            raise EvalveError(f"{reason} Cleanup also failed. {message}") from failure
+        if isinstance(failure, Exception) and (unregistered or retained):
+            parts = (
+                (unregistered, f"Reason: {failure}", made, retained)
+                if unregistered
+                else (str(failure), retained)
+            )
+            raise EvalveError(" ".join(item for item in parts if item)) from failure
+    if publication is None:
+        print(f"Local image: {final_name}")
+        print("Nothing was pushed and nothing was registered.")
+        return final_name
+    if final_name:
+        print(f"Local image: {final_name}")
+    return final_name or publication.target

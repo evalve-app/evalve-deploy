@@ -1,14 +1,27 @@
 """Small real-engine fixture for the image checks; no Kitaru server needed."""
 
+import io
+import random
+import re
 import shutil
 import tempfile
 import time
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
-from evalve import EvalveError, build
+from evalve import EvalveError, build, publish
+from test_build_push import KEY, Services, arguments, credential
 
 ENGINE = shutil.which("docker") or shutil.which("podman")
+REGISTRY_IMAGE = "registry:2"
+# A registry answers with the digest of the kind that the request accepts.
+MANIFEST_TYPES = (
+    "application/vnd.oci.image.index.v1+json",
+    "application/vnd.docker.distribution.manifest.list.v2+json",
+    "application/vnd.oci.image.manifest.v1+json",
+    "application/vnd.docker.distribution.manifest.v2+json",
+)
 
 
 @unittest.skipUnless(ENGINE, "docker or podman is not on PATH")
@@ -230,6 +243,92 @@ assert Path('/opt/evalve/supervisor.py').is_file()
             self.assertEqual(failures, [], f"Remove these test resources: {failures}")
         print(
             f"Real-engine image checks ({build.PLATFORM}): {time.monotonic() - started:.2f}s",
+            flush=True,
+        )
+
+
+@unittest.skipUnless(ENGINE, "docker or podman is not on PATH")
+class RegistryTest(unittest.TestCase):
+    def test_the_registered_digest_is_the_digest_that_the_registry_gives(self):
+        # The fakes of the other tests cannot show what an engine reports
+        # after a push. A registry container on localhost can: the engine
+        # does the real login, tag, push and logout, with no AWS.
+        engine = build.Engine(Path(ENGINE).name, build.run_program)
+        services = Services()
+        self.addCleanup(services.server_close)
+        self.addCleanup(services.shutdown)
+        registry = f"{engine.prefix}-registry"
+        repository = "evalve-test/agent-image"
+        tag = f"test-{engine.prefix.removeprefix('evalve-build-')}"
+        publication = None
+        started = time.monotonic()
+        # The registry is on the network of the engine, not on a published
+        # port: the daemon of Docker Desktop runs in a VM and cannot reach a
+        # published port at its own loopback address. An engine accepts HTTP
+        # only for a loopback registry.
+        host = f"127.0.0.1:{random.randint(20000, 60000)}"
+
+        def in_registry(*wget):
+            return engine.call(
+                "exec", registry, "wget", "-q", "-O", "/dev/null", *wget, timeout=15
+            )
+
+        try:
+            engine.containers.add(registry)
+            build.require_success(
+                engine.call(
+                    "run", "--detach", "--name", registry, "--network", "host",
+                    "--env", f"REGISTRY_HTTP_ADDR={host}", REGISTRY_IMAGE,
+                ),  # fmt: skip
+                "Starting the test registry",
+            )
+            deadline = time.monotonic() + 30
+            while in_registry(f"http://{host}/v2/").returncode:
+                self.assertLess(time.monotonic(), deadline, "The registry did not start.")
+                time.sleep(0.2)
+            services.credentials = [
+                (
+                    200,
+                    credential(
+                        registry=host, repository=repository, username="builder"
+                    ),
+                    {},
+                )
+            ]
+            with tempfile.TemporaryDirectory(prefix="evalve-engine-test-") as temporary:
+                directory = Path(temporary)
+                # New content for each run, so that the registry has no copy.
+                (directory / "marker").write_text(engine.prefix)
+                (directory / "Dockerfile").write_text("FROM scratch\nCOPY marker /\n")
+                image = engine.build_image(directory, "Dockerfile", "final")
+            args = arguments()
+            publication = publish.prepare(args, services.url, KEY)
+            with redirect_stdout(io.StringIO()):
+                publish.publish(publication, engine, args, image, tag, "a" * 40)
+            headers = in_registry(
+                "-S",
+                "--header",
+                f"Accept: {', '.join(MANIFEST_TYPES)}",
+                f"http://{host}/v2/{repository}/manifests/{tag}",
+            ).stderr
+            [given] = re.findall(
+                r"(?im)^\s*Docker-Content-Digest:\s*(sha256:[a-f0-9]{64})\s*$", headers
+            )
+            self.assertEqual(publication.digest, given)
+            [registration] = [
+                r for r in services.requests if r.path.endswith("/versions")
+            ]
+            self.assertEqual(
+                registration.body["run_spec"]["env"]["EVALVE_AGENT_IMAGE_DIGEST"],
+                given,
+            )
+        finally:
+            leftover = publish.logout(publication, engine)
+            failures = engine.cleanup()
+            self.assertEqual(failures, [], f"Remove these test resources: {failures}")
+            self.assertIsNone(leftover)
+        print(
+            f"Real-engine push to a local registry: {time.monotonic() - started:.2f}s",
             flush=True,
         )
 
