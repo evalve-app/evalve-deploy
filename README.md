@@ -246,14 +246,16 @@ evalve stop
 evalve start
 ```
 
-`stop` drains the Evalve backend and Kitaru through Systems Manager and stops EC2. RDS stays running and the Elastic IP stays associated. `start` brings the same instance back and checks the existing HTTPS endpoint, the Evalve dashboard and, if the deployment has one, the Evalve backend.
+`stop` stops the Evalve backend, drains the Fargate Loop tasks, then stops Kitaru and EC2. It waits up to 150 seconds for ECS to confirm that the Loop tasks have stopped and warns about any tasks still active at the deadline. RDS stays running and the Elastic IP stays associated. `start` brings the same instance back and checks the existing HTTPS endpoint, the Evalve dashboard and, if the deployment has one, the Evalve backend.
 
 ```sh
 evalve down
 evalve up --restore <snapshot-id>
 ```
 
-`down` asks you to type `evalve` before making changes. It stops EC2, takes an encrypted manual RDS snapshot, verifies the snapshot and its application secret version, and saves the restore metadata to S3 before deleting the runtime infrastructure. It prints the snapshot ID and restore command. The snapshot, its application secret, the S3 state bucket, and the agent image repository remain in AWS.
+`down` asks you to type `evalve` before making changes. It uses the same shutdown sequence as `stop`, then takes an encrypted manual RDS snapshot, verifies the snapshot and its application secret version, and saves the restore metadata to S3 before deleting the runtime infrastructure. It prints the snapshot ID and restore command. The snapshot, its application secret, and the S3 state bucket remain in AWS.
+
+The agent image repository, its images, and ECS task definitions also remain after `down`. The images continue to incur storage charges. Only the Operator deletes the repository, images, or task definitions using an AWS login. A restore needs the original images. A Loop restored from a snapshot fails if its image has been deleted.
 
 If teardown is interrupted, rerun `down` to use the same snapshot. If restoration is interrupted, rerun `up --restore` with the same snapshot ID and options. While either operation is pending, Evalve blocks other lifecycle commands. Restore starts at a new `sslip.io` URL with the dashboard at `dashboard.<new hostname>`, and reuses the saved Kitaru credentials. Update your agents' URLs after restoring, or point your custom domain at the new Elastic IP and switch it again.
 

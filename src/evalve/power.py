@@ -1,6 +1,8 @@
 """Graceful power changes for the EC2 instance already in Terraform state."""
 
 import json
+import subprocess
+import sys
 import time
 
 from evalve import EvalveError
@@ -11,15 +13,18 @@ from evalve.aws import Aws, AwsError
 # has finished its writes before down takes the database snapshot.
 BACKEND_UNIT = "evalve-backend.service"
 IF_BACKEND = f"if systemctl cat {BACKEND_UNIT} >/dev/null 2>&1; then"
-DRAIN = [
+DRAIN_BACKEND = [
     "systemctl stop evalve-refresh.timer evalve-refresh.service",
     f"{IF_BACKEND} systemctl stop {BACKEND_UNIT}; fi",
     "running=$(docker ps --filter name=^/evalve-backend$ --format '{{.ID}}')",
     'test -z "$running"',
+]
+DRAIN_KITARU = [
     "systemctl stop evalve-kitaru.service",
     "running=$(docker ps --filter name=^/evalve-kitaru$ --format '{{.ID}}')",
     'test -z "$running"',
 ]
+DRAIN = DRAIN_BACKEND + DRAIN_KITARU
 BACKEND_IMAGE_FILE = "/etc/evalve/backend-image.env"
 
 
@@ -203,16 +208,116 @@ def start(aws: Aws, instance_id: str) -> None:
     run_server_command(aws, instance_id, START)
 
 
-def stop(aws: Aws, instance_id: str, *, allow_gone: bool = False) -> None:
+def describe_loop_tasks(aws: Aws, cluster: str, batch: list[str], **options) -> dict:
+    result = aws.call(
+        "ecs", "describe-tasks", "--cluster", cluster, "--tasks", *batch, **options
+    )
+    tasks = {task["taskArn"]: task for task in result["tasks"]}
+    if tasks.keys() != set(batch):
+        raise EvalveError("ECS could not verify the status of all Loop tasks.")
+    return tasks
+
+
+def request_loop_task_stops(
+    aws: Aws, cluster: str | None, *, action: str
+) -> set[str]:
+    """Request shutdown and return the task ARNs that still need to be checked."""
+    if not cluster:
+        return set()
+
+    # ListTasks filters by desired status. A task with desired status STOPPED
+    # may still be active, including on a retry after an earlier drain.
+    arns = set()
+    for status in ("RUNNING", "STOPPED"):
+        result = aws.call(
+            "ecs", "list-tasks", "--cluster", cluster, "--desired-status", status
+        )
+        arns.update(result["taskArns"])
+
+    ordered = sorted(arns)
+    active = set()
+    for offset in range(0, len(ordered), 100):
+        batch = ordered[offset : offset + 100]
+        tasks = describe_loop_tasks(aws, cluster, batch)
+        for arn, task in tasks.items():
+            if task["lastStatus"] == "STOPPED":
+                continue
+            if task["desiredStatus"] != "STOPPED":
+                aws.call(
+                    "ecs", "stop-task", "--cluster", cluster, "--task", arn,
+                    "--reason", f"evalve {action}",
+                )
+            active.add(arn)
+    return active
+
+
+def wait_for_loop_tasks(aws: Aws, cluster: str, task_arns: set[str]) -> int:
+    """Return how many watched tasks ECS confirmed stopped within 150 seconds."""
+    remaining = set(task_arns)
+    deadline = time.monotonic() + 150
+    while remaining and time.monotonic() < deadline:
+        ordered = sorted(remaining)
+        for offset in range(0, len(ordered), 100):
+            timeout = deadline - time.monotonic()
+            if timeout <= 0:
+                break
+            try:
+                tasks = describe_loop_tasks(
+                    aws, cluster, ordered[offset : offset + 100], timeout=timeout
+                )
+            except subprocess.TimeoutExpired:
+                # The status request used the remainder of the wait budget.
+                break
+            remaining.difference_update(
+                arn for arn, task in tasks.items() if task["lastStatus"] == "STOPPED"
+            )
+        delay = deadline - time.monotonic()
+        if remaining and delay > 0:
+            time.sleep(min(5, delay))
+
+    for arn in sorted(remaining):
+        print(f"Warning: Loop task still active after 150 seconds: {arn}", file=sys.stderr)
+    return len(task_arns) - len(remaining)
+
+
+def drain_loop_tasks(aws: Aws, cluster: str, *, action: str) -> int:
+    try:
+        task_arns = request_loop_task_stops(aws, cluster, action=action)
+        return wait_for_loop_tasks(aws, cluster, task_arns)
+    except AwsError as exc:
+        # A manually removed cluster may still be recorded in Terraform state.
+        if action == "down" and exc.code == "ClusterNotFoundException":
+            return 0
+        raise
+
+
+def stop(
+    aws: Aws,
+    instance_id: str,
+    *,
+    allow_gone: bool = False,
+    cluster: str | None = None,
+    action: str = "stop",
+) -> int:
     state = instance_state(aws, instance_id, allow_gone=allow_gone)
     if state == "stopped" or (allow_gone and state == "terminated"):
-        return
+        return drain_loop_tasks(aws, cluster, action=action) if cluster else 0
     if state == "pending":
         aws.call("ec2", "wait", "instance-running", "--instance-ids", instance_id)
         state = "running"
+
+    stopped = 0
     if state == "running":
-        run_server_command(aws, instance_id, DRAIN)
+        if cluster:
+            run_server_command(aws, instance_id, DRAIN_BACKEND)
+            stopped = drain_loop_tasks(aws, cluster, action=action)
+            run_server_command(aws, instance_id, DRAIN_KITARU)
+        else:
+            run_server_command(aws, instance_id, DRAIN)
         aws.call("ec2", "stop-instances", "--instance-ids", instance_id)
     elif state != "stopping":
         raise EvalveError(f"Cannot stop the recorded EC2 instance in state {state}.")
     aws.call("ec2", "wait", "instance-stopped", "--instance-ids", instance_id)
+    if state == "stopping" and cluster:
+        return drain_loop_tasks(aws, cluster, action=action)
+    return stopped

@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import DEFAULT, Mock, patch
 
 from evalve import EvalveError, backup, cli, lifecycle, power, terraform
-from evalve.aws import STATE_KEY
+from evalve.aws import STATE_KEY, AwsError
 
 ACCOUNT = "123456789012"
 REGION = "us-east-1"
@@ -183,6 +183,82 @@ class PowerTest(unittest.TestCase):
             " systemctl start evalve-backend.service; fi",
         )
 
+    def test_loop_task_stop_requests_track_tasks_already_draining(self):
+        tasks = [
+            {"taskArn": "active", "desiredStatus": "RUNNING", "lastStatus": "RUNNING"},
+            {"taskArn": "draining", "desiredStatus": "STOPPED", "lastStatus": "STOPPING"},
+            {"taskArn": "finished", "desiredStatus": "STOPPED", "lastStatus": "STOPPED"},
+        ]
+        for action in ("stop", "down"):
+            with self.subTest(action=action):
+                aws = Mock()
+                aws.call.side_effect = [
+                    {"taskArns": ["active"]},
+                    {"taskArns": ["draining", "finished"]},
+                    {"tasks": tasks},
+                    {},
+                ]
+                self.assertEqual(
+                    power.request_loop_task_stops(aws, "evalve", action=action),
+                    {"active", "draining"},
+                )
+                self.assertEqual(aws.call.call_count, 4)
+                aws.call.assert_called_with(
+                    "ecs", "stop-task", "--cluster", "evalve", "--task", "active",
+                    "--reason", f"evalve {action}",
+                )
+
+    def test_loop_task_stop_requests_skip_ecs_without_a_cluster(self):
+        aws = Mock()
+        self.assertEqual(power.request_loop_task_stops(aws, None, action="stop"), set())
+        aws.call.assert_not_called()
+
+    def test_ecs_wait_reports_only_tasks_left_at_deadline(self):
+        aws = Mock()
+        aws.call.return_value = {"tasks": [
+            {"taskArn": "finished", "lastStatus": "STOPPED"},
+            {"taskArn": "unfinished", "lastStatus": "STOPPING"},
+        ]}
+        with (
+            patch.object(power.time, "monotonic", side_effect=[0, 1, 2, 150, 150]),
+            redirect_stderr(io.StringIO()) as warnings,
+        ):
+            count = power.wait_for_loop_tasks(aws, "evalve", {"finished", "unfinished"})
+        self.assertEqual(count, 1)
+        self.assertIn("150 seconds: unfinished", warnings.getvalue())
+
+    def test_stop_waits_for_ecs_between_server_commands(self):
+        for action in ("stop", "down"):
+            with self.subTest(action=action):
+                aws = Mock()
+                events = []
+                with (
+                    patch.object(power, "instance_state", return_value="running"),
+                    patch.object(power, "run_server_command",
+                                 side_effect=lambda *args: events.append(args[-1])),
+                    patch.object(power, "request_loop_task_stops",
+                                 side_effect=lambda *a, **kw: events.append(kw["action"]) or {"task"}),
+                    patch.object(power, "wait_for_loop_tasks",
+                                 side_effect=lambda *args: events.append(args[-1]) or 1),
+                ):
+                    count = power.stop(aws, INSTANCE, cluster="evalve", action=action)
+                self.assertEqual(count, 1)
+                self.assertEqual(events, [power.DRAIN_BACKEND, action, {"task"}, power.DRAIN_KITARU])
+
+    def test_ecs_verification_failure_leaves_kitaru_and_ec2_up(self):
+        aws = Mock()
+        with (
+            patch.object(power, "instance_state", return_value="running"),
+            patch.object(power, "run_server_command") as command,
+            patch.object(power, "request_loop_task_stops", return_value={"task"}),
+            patch.object(power, "wait_for_loop_tasks",
+                         side_effect=EvalveError("ECS verification failed")),
+            self.assertRaisesRegex(EvalveError, "ECS verification failed"),
+        ):
+            power.stop(aws, INSTANCE, cluster="evalve")
+        command.assert_called_once_with(aws, INSTANCE, power.DRAIN_BACKEND)
+        aws.call.assert_not_called()
+
     def test_stop_never_sends_ec2_stop_after_failed_drain(self):
         aws = Mock()
         with (
@@ -202,6 +278,28 @@ class PowerTest(unittest.TestCase):
         aws.call.assert_called_once_with(
             "ec2", "wait", "instance-stopped", "--instance-ids", INSTANCE
         )
+
+
+    def test_stop_rechecks_ecs_after_ec2_has_stopped(self):
+        for state in ("stopped", "stopping", "terminated"):
+            with self.subTest(state=state):
+                aws = Mock()
+                with (
+                    patch.object(power, "instance_state", return_value=state),
+                    patch.object(power, "run_server_command") as command,
+                    patch.object(power, "drain_loop_tasks", return_value=1) as drain,
+                ):
+                    self.assertEqual(
+                        power.stop(aws, INSTANCE, allow_gone=True, cluster="evalve"), 1
+                    )
+                command.assert_not_called()
+                drain.assert_called_once_with(aws, "evalve", action="stop")
+                if state == "stopping":
+                    aws.call.assert_called_once_with(
+                        "ec2", "wait", "instance-stopped", "--instance-ids", INSTANCE
+                    )
+                else:
+                    aws.call.assert_not_called()
 
 
 class BackupTest(unittest.TestCase):
@@ -362,6 +460,34 @@ class ShutdownTest(unittest.TestCase):
         self.assertEqual(self.events, [])
         self.aws.create_document.assert_not_called()
 
+    def test_down_reports_retention_when_agent_repository_exists(self):
+        output = self.invoke()
+        self.assertIn(
+            "The state bucket, application secret, snapshots and agent image repository "
+            "will be retained. The agent images continue to cost money for their storage.",
+            output,
+        )
+        self.aws.call.assert_called_once_with(
+            "ecr", "describe-repositories", "--repository-names", "evalve-agent-images"
+        )
+
+    def test_down_keeps_original_notice_when_agent_repository_is_missing(self):
+        self.aws.call.side_effect = AwsError(
+            "ecr describe-repositories", "RepositoryNotFoundException"
+        )
+        output = self.invoke(answer="no")
+        self.assertIn(
+            "The state bucket, Evalve secrets, and snapshots will be retained.", output
+        )
+        self.assertNotIn("agent image repository", output)
+
+    def test_down_stops_before_confirmation_if_repository_lookup_fails(self):
+        self.aws.call.side_effect = AwsError("ecr describe-repositories", "AccessDenied")
+        with self.assertRaisesRegex(AwsError, "AccessDenied"):
+            lifecycle.down(self.aws, Path("/unused"))
+        self.aws.create_document.assert_not_called()
+        self.assertEqual(self.events, [])
+
     def test_verified_backup_and_metadata_readback_precede_destroy(self):
         output = self.invoke()
         self.assertEqual(
@@ -396,6 +522,47 @@ class ShutdownTest(unittest.TestCase):
         self.assertEqual(self.events.count("snapshot"), 1)
         self.assertEqual(self.events.count("verify"), 2)
         self.assertEqual(self.events.count("drain"), 1)
+
+    def test_down_rechecks_ecs_before_resuming_destroy_with_saved_snapshot(self):
+        with self.assertRaisesRegex(EvalveError, "Terraform interrupted"):
+            self.invoke(destroy_fails=True)
+        self.documents[STATE_KEY]["outputs"]["ecs_cluster_name"] = {"value": "evalve"}
+
+        def drain(aws, cluster, *, action):
+            self.assertIs(aws, self.aws)
+            self.assertEqual((cluster, action), ("evalve", "down"))
+            self.events.append("ecs retry")
+            return 1
+
+        self.events.clear()
+        with patch.object(power, "drain_loop_tasks", side_effect=drain):
+            output = self.invoke()
+        self.assertLess(self.events.index("ecs retry"), self.events.index("destroy"))
+        self.assertNotIn("drain", self.events)
+        self.assertNotIn("snapshot", self.events)
+        self.assertIn("Loop tasks stopped: 1", output)
+
+    def test_down_resumes_destroy_when_recorded_ecs_cluster_is_missing(self):
+        with self.assertRaisesRegex(EvalveError, "Terraform interrupted"):
+            self.invoke(destroy_fails=True)
+        self.documents[STATE_KEY]["outputs"]["ecs_cluster_name"] = {"value": "evalve"}
+        self.aws.call.reset_mock()
+        self.aws.call.side_effect = [
+            {},
+            AwsError("ecs list-tasks", "ClusterNotFoundException"),
+        ]
+
+        self.events.clear()
+        output = self.invoke()
+
+        self.assertEqual(self.aws.call.call_count, 2)
+        self.aws.call.assert_called_with(
+            "ecs", "list-tasks", "--cluster", "evalve", "--desired-status", "RUNNING"
+        )
+        self.assertIn("Loop tasks stopped: 0", output)
+        self.assertIn("destroy", self.events)
+        self.assertNotIn("snapshot", self.events)
+        self.assertNotIn(lifecycle.OPERATION_KEY, self.documents)
 
     def test_backend_image_is_saved_for_restore(self):
         image = "ghcr.io/evalve-app/evalve-backend@sha256:" + "0" * 64
