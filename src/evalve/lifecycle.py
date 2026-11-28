@@ -5,7 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from evalve import EvalveError, backup, power, terraform
-from evalve.aws import STATE_KEY, Aws
+from evalve.aws import AGENT_IMAGE_REPOSITORY, STATE_KEY, Aws, AwsError
 from evalve.readiness import wait_for_backend, wait_for_dashboard, wait_for_kitaru
 
 OPERATION_KEY = "evalve/operation.json"
@@ -296,9 +296,21 @@ def down(aws: Aws, directory: Path) -> None:
     server = resource_attributes(resources, "aws_instance", "server")
     database = resource_attributes(resources, "aws_db_instance", "main")
     print(f"AWS account: {aws.account} | Region: {aws.region}")
-    print(
-        "Evalve will stop serving traffic. The state bucket, Evalve secrets, and snapshots will be retained."
-    )
+    try:
+        aws.call(
+            "ecr", "describe-repositories", "--repository-names", AGENT_IMAGE_REPOSITORY
+        )
+    except AwsError as exc:
+        if exc.code != "RepositoryNotFoundException":
+            raise
+        print(
+            "Evalve will stop serving traffic. The state bucket, Evalve secrets, and snapshots will be retained."
+        )
+    else:
+        print(
+            "The state bucket, application secret, snapshots and agent image repository "
+            "will be retained. The agent images continue to cost money for their storage."
+        )
     if input("Type evalve to confirm teardown: ").strip() != "evalve":
         print("Teardown cancelled.")
         return

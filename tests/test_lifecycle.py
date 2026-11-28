@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import DEFAULT, Mock, patch
 
 from evalve import EvalveError, backup, cli, lifecycle, power, terraform
-from evalve.aws import STATE_KEY
+from evalve.aws import STATE_KEY, AwsError
 
 ACCOUNT = "123456789012"
 REGION = "us-east-1"
@@ -459,6 +459,34 @@ class ShutdownTest(unittest.TestCase):
         self.invoke(answer="no")
         self.assertEqual(self.events, [])
         self.aws.create_document.assert_not_called()
+
+    def test_down_reports_retention_when_agent_repository_exists(self):
+        output = self.invoke()
+        self.assertIn(
+            "The state bucket, application secret, snapshots and agent image repository "
+            "will be retained. The agent images continue to cost money for their storage.",
+            output,
+        )
+        self.aws.call.assert_called_once_with(
+            "ecr", "describe-repositories", "--repository-names", "evalve-agent-images"
+        )
+
+    def test_down_keeps_original_notice_when_agent_repository_is_missing(self):
+        self.aws.call.side_effect = AwsError(
+            "ecr describe-repositories", "RepositoryNotFoundException"
+        )
+        output = self.invoke(answer="no")
+        self.assertIn(
+            "The state bucket, Evalve secrets, and snapshots will be retained.", output
+        )
+        self.assertNotIn("agent image repository", output)
+
+    def test_down_stops_before_confirmation_if_repository_lookup_fails(self):
+        self.aws.call.side_effect = AwsError("ecr describe-repositories", "AccessDenied")
+        with self.assertRaisesRegex(AwsError, "AccessDenied"):
+            lifecycle.down(self.aws, Path("/unused"))
+        self.aws.create_document.assert_not_called()
+        self.assertEqual(self.events, [])
 
     def test_verified_backup_and_metadata_readback_precede_destroy(self):
         output = self.invoke()
