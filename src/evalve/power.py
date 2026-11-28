@@ -1,6 +1,8 @@
 """Graceful power changes for the EC2 instance already in Terraform state."""
 
 import json
+import subprocess
+import sys
 import time
 
 from evalve import EvalveError
@@ -206,6 +208,16 @@ def start(aws: Aws, instance_id: str) -> None:
     run_server_command(aws, instance_id, START)
 
 
+def describe_loop_tasks(aws: Aws, cluster: str, batch: list[str], **options) -> dict:
+    result = aws.call(
+        "ecs", "describe-tasks", "--cluster", cluster, "--tasks", *batch, **options
+    )
+    tasks = {task["taskArn"]: task for task in result["tasks"]}
+    if tasks.keys() != set(batch):
+        raise EvalveError("ECS could not verify the status of all Loop tasks.")
+    return tasks
+
+
 def request_loop_task_stops(
     aws: Aws, cluster: str | None, *, action: str
 ) -> set[str]:
@@ -226,10 +238,7 @@ def request_loop_task_stops(
     active = set()
     for offset in range(0, len(ordered), 100):
         batch = ordered[offset : offset + 100]
-        result = aws.call("ecs", "describe-tasks", "--cluster", cluster, "--tasks", *batch)
-        tasks = {task["taskArn"]: task for task in result["tasks"]}
-        if tasks.keys() != set(batch):
-            raise EvalveError("ECS could not verify the status of all Loop tasks.")
+        tasks = describe_loop_tasks(aws, cluster, batch)
         for arn, task in tasks.items():
             if task["lastStatus"] == "STOPPED":
                 continue
@@ -242,22 +251,65 @@ def request_loop_task_stops(
     return active
 
 
+def wait_for_loop_tasks(aws: Aws, cluster: str, task_arns: set[str]) -> int:
+    """Return how many watched tasks ECS confirmed stopped within 150 seconds."""
+    remaining = set(task_arns)
+    deadline = time.monotonic() + 150
+    while remaining and time.monotonic() < deadline:
+        ordered = sorted(remaining)
+        for offset in range(0, len(ordered), 100):
+            timeout = deadline - time.monotonic()
+            if timeout <= 0:
+                break
+            try:
+                tasks = describe_loop_tasks(
+                    aws, cluster, ordered[offset : offset + 100], timeout=timeout
+                )
+            except subprocess.TimeoutExpired:
+                # The status request used the remainder of the wait budget.
+                break
+            remaining.difference_update(
+                arn for arn, task in tasks.items() if task["lastStatus"] == "STOPPED"
+            )
+        delay = deadline - time.monotonic()
+        if remaining and delay > 0:
+            time.sleep(min(5, delay))
+
+    for arn in sorted(remaining):
+        print(f"Warning: Loop task still active after 150 seconds: {arn}", file=sys.stderr)
+    return len(task_arns) - len(remaining)
+
+
+def drain_loop_tasks(aws: Aws, cluster: str, *, action: str) -> int:
+    task_arns = request_loop_task_stops(aws, cluster, action=action)
+    return wait_for_loop_tasks(aws, cluster, task_arns)
+
+
 def stop(
     aws: Aws,
     instance_id: str,
     *,
     allow_gone: bool = False,
     cluster: str | None = None,
-) -> None:
+    action: str = "stop",
+) -> int:
     state = instance_state(aws, instance_id, allow_gone=allow_gone)
     if state == "stopped" or (allow_gone and state == "terminated"):
-        return
+        return 0
     if state == "pending":
         aws.call("ec2", "wait", "instance-running", "--instance-ids", instance_id)
         state = "running"
+
+    stopped = 0
     if state == "running":
-        run_server_command(aws, instance_id, DRAIN)
+        if cluster:
+            run_server_command(aws, instance_id, DRAIN_BACKEND)
+            stopped = drain_loop_tasks(aws, cluster, action=action)
+            run_server_command(aws, instance_id, DRAIN_KITARU)
+        else:
+            run_server_command(aws, instance_id, DRAIN)
         aws.call("ec2", "stop-instances", "--instance-ids", instance_id)
     elif state != "stopping":
         raise EvalveError(f"Cannot stop the recorded EC2 instance in state {state}.")
     aws.call("ec2", "wait", "instance-stopped", "--instance-ids", instance_id)
+    return stopped

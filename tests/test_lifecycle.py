@@ -213,6 +213,52 @@ class PowerTest(unittest.TestCase):
         self.assertEqual(power.request_loop_task_stops(aws, None, action="stop"), set())
         aws.call.assert_not_called()
 
+    def test_ecs_wait_reports_only_tasks_left_at_deadline(self):
+        aws = Mock()
+        aws.call.return_value = {"tasks": [
+            {"taskArn": "finished", "lastStatus": "STOPPED"},
+            {"taskArn": "unfinished", "lastStatus": "STOPPING"},
+        ]}
+        with (
+            patch.object(power.time, "monotonic", side_effect=[0, 1, 2, 150, 150]),
+            redirect_stderr(io.StringIO()) as warnings,
+        ):
+            count = power.wait_for_loop_tasks(aws, "evalve", {"finished", "unfinished"})
+        self.assertEqual(count, 1)
+        self.assertIn("150 seconds: unfinished", warnings.getvalue())
+
+    def test_stop_waits_for_ecs_between_server_commands(self):
+        for action in ("stop", "down"):
+            with self.subTest(action=action):
+                aws = Mock()
+                events = []
+                with (
+                    patch.object(power, "instance_state", return_value="running"),
+                    patch.object(power, "run_server_command",
+                                 side_effect=lambda *args: events.append(args[-1])),
+                    patch.object(power, "request_loop_task_stops",
+                                 side_effect=lambda *a, **kw: events.append(kw["action"]) or {"task"}),
+                    patch.object(power, "wait_for_loop_tasks",
+                                 side_effect=lambda *args: events.append(args[-1]) or 1),
+                ):
+                    count = power.stop(aws, INSTANCE, cluster="evalve", action=action)
+                self.assertEqual(count, 1)
+                self.assertEqual(events, [power.DRAIN_BACKEND, action, {"task"}, power.DRAIN_KITARU])
+
+    def test_ecs_verification_failure_leaves_kitaru_and_ec2_up(self):
+        aws = Mock()
+        with (
+            patch.object(power, "instance_state", return_value="running"),
+            patch.object(power, "run_server_command") as command,
+            patch.object(power, "request_loop_task_stops", return_value={"task"}),
+            patch.object(power, "wait_for_loop_tasks",
+                         side_effect=EvalveError("ECS verification failed")),
+            self.assertRaisesRegex(EvalveError, "ECS verification failed"),
+        ):
+            power.stop(aws, INSTANCE, cluster="evalve")
+        command.assert_called_once_with(aws, INSTANCE, power.DRAIN_BACKEND)
+        aws.call.assert_not_called()
+
     def test_stop_never_sends_ec2_stop_after_failed_drain(self):
         aws = Mock()
         with (

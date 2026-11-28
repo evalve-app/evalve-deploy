@@ -155,11 +155,14 @@ def power_change(aws: Aws, action: str) -> None:
             print(f"Evalve dashboard: {dashboard_url}")
     else:
         print("Draining Kitaru before stopping EC2…", flush=True)
-        power.stop(
+        cluster = outputs.get("ecs_cluster_name")
+        stopped = power.stop(
             aws,
             outputs["instance_id"],
-            cluster=outputs.get("ecs_cluster_name"),
+            cluster=cluster,
         )
+        if cluster:
+            print(f"Loop tasks stopped: {stopped}")
         print("EC2 is stopped. Run evalve start to resume at the same URL.")
 
 
@@ -228,7 +231,11 @@ def save_backup(
                 )
         else:
             print("Draining and stopping EC2 before the database snapshot…", flush=True)
-            power.stop(aws, instance_id, allow_gone=True, cluster=cluster)
+            stopped = power.stop(
+                aws, instance_id, allow_gone=True, cluster=cluster, action="down"
+            )
+            if cluster:
+                print(f"Loop tasks stopped: {stopped}")
     if not snapshot_id:
         return
     key = backup.snapshot_key(snapshot_id)

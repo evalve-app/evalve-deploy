@@ -102,7 +102,8 @@ class Aws:
         self.bucket = f"evalve-state-{self.account}-{self.region}"
 
     def call(
-        self, service: str, action: str, *arguments: str, payload: str | None = None
+        self, service: str, action: str, *arguments: str,
+        payload: str | None = None, timeout: float | None = None,
     ) -> dict:
         result = subprocess.run(
             [*self.command, service, action, *arguments],
@@ -110,6 +111,7 @@ class Aws:
             capture_output=True,
             text=True,
             input=payload,
+            timeout=timeout,
         )
         if result.returncode:
             # Do not echo CLI output on errors, including commands with secret input.
