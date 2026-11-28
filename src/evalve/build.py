@@ -67,34 +67,53 @@ FIND_WORKER_OWNED = [*FIND_WRITABLE[:-2], "-uid", "1000", "-print"]
 class BuildInterrupted(KeyboardInterrupt):
     """A normal termination signal that must unwind through build cleanup."""
 
-    def __init__(self, signum: int):
+    def __init__(self, signum: int, details: str = ""):
         self.signum = signum
-        super().__init__(f"Build interrupted by {signal.Signals(signum).name}.")
+        super().__init__(
+            f"Build interrupted by {signal.Signals(signum).name}."
+            + (f" {details}" if details else "")
+        )
+
+
+class _BuildSignals:
+    def __init__(self):
+        self.signum = None
+        self.cleaning = False
+
+    def interrupt(self, signum, frame):
+        # Preserve the first signal; further signals must not abort unwinding
+        # or cleanup. SIGKILL remains available for forced termination.
+        if self.signum is not None:
+            return
+        self.signum = signum
+        if not self.cleaning:
+            raise BuildInterrupted(signum)
 
 
 @contextmanager
 def termination_signals():
+    state = _BuildSignals()
     if threading.current_thread() is not threading.main_thread():
-        yield
+        yield state
         return
     previous = {}
-
-    def interrupt(signum, frame):
-        # Let the first normal termination finish cleanup. SIGKILL can still
-        # force termination, and inherited ignored signals stay ignored.
-        for caught in previous:
-            signal.signal(caught, signal.SIG_IGN)
-        raise BuildInterrupted(signum)
-
     try:
-        for name in ("SIGTERM", "SIGHUP"):
+        for name in ("SIGTERM", "SIGHUP", "SIGINT"):
             signum = getattr(signal, name, None)
             if signum is not None:
                 handler = signal.getsignal(signum)
                 if handler != signal.SIG_IGN:
                     previous[signum] = handler
-                    signal.signal(signum, interrupt)
-        yield
+                    signal.signal(signum, state.interrupt)
+        try:
+            yield state
+        except BaseException as exc:
+            if state.signum is not None and not isinstance(exc, BuildInterrupted):
+                raise BuildInterrupted(state.signum, str(exc)) from exc
+            raise
+        # Also catch a signal deferred after _build's final outcome check.
+        if state.signum is not None:
+            raise BuildInterrupted(state.signum)
     finally:
         for signum, handler in previous.items():
             signal.signal(signum, handler)
@@ -709,10 +728,15 @@ def check_source_links(
     script = """import os, pathlib, stat, sys
 visited = set()
 active = set()
+private = pathlib.Path('/tmp/evalve')
 
 def fail(path, reason):
     print(str(path) + ': ' + reason)
     raise SystemExit(1)
+
+def refuse_private(path, location):
+    if path == private or private in path.parents:
+        fail(location, 'source uses /tmp/evalve, which the final layer gives to the worker: ' + str(path))
 
 def resolve_source(path, location, resolving=frozenset()):
     current = pathlib.Path('/')
@@ -720,6 +744,7 @@ def resolve_source(path, location, resolving=frozenset()):
         if not current.is_dir():
             fail(location, 'source symlink has a non-directory parent: ' + str(current))
         current = current.parent if part == '..' else current / part
+        refuse_private(current, location)
         try:
             info = current.lstat()
         except OSError:
@@ -742,6 +767,7 @@ def resolve_source(path, location, resolving=frozenset()):
 
 def visit(path, origin=None):
     location = origin or path
+    refuse_private(path, location)
     try:
         info = path.lstat()
     except OSError:
@@ -850,11 +876,11 @@ def copy_supervisor(target: Path) -> None:
 
 
 def build(args, *, run=None, get_version=None) -> str:
-    with termination_signals():
-        return _build(args, run=run, get_version=get_version)
+    with termination_signals() as interruptions:
+        return _build(args, interruptions, run=run, get_version=get_version)
 
 
-def _build(args, *, run=None, get_version=None) -> str:
+def _build(args, interruptions: _BuildSignals, *, run=None, get_version=None) -> str:
     validate_inputs(args)
     run = run or run_program
     get_version = get_version or server_version
@@ -921,16 +947,31 @@ def _build(args, *, run=None, get_version=None) -> str:
         failure = exc
         raise
     finally:
+        interruptions.cleaning = True
         failures = engine.cleanup()
         try:
             temporary.cleanup()
         except OSError:
             failures.append(temporary.name)
+        retained = (
+            f"Validated local image retained: {final_name}." if final_name else ""
+        )
+        message = (
+            f"Could not clean up these temporary resources: {', '.join(failures)}."
+            if failures
+            else ""
+        )
+        signum = interruptions.signum
+        if isinstance(failure, BuildInterrupted):
+            signum = failure.signum
+        if signum is not None:
+            details = []
+            if failure is not None and not isinstance(failure, BuildInterrupted):
+                details.append(f"Original failure: {failure}.")
+            details.extend(item for item in (message, retained) if item)
+            raise BuildInterrupted(signum, " ".join(details)) from failure
         if failures:
-            retained = (
-                f" Validated local image retained: {final_name}." if final_name else ""
-            )
-            message = f"Could not clean up these temporary resources: {', '.join(failures)}.{retained}"
+            message = " ".join(item for item in (message, retained) if item)
             if failure is not None:
                 raise EvalveError(
                     f"{failure} Cleanup also failed. {message}"

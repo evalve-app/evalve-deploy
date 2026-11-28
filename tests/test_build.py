@@ -660,6 +660,22 @@ class BuildTest(unittest.TestCase):
         ):
             self.execute()
 
+    def test_interruption_keeps_its_signal_when_cleanup_also_fails(self):
+        def override(argv, _):
+            if argv[1:2] == ["build"]:
+                raise build.BuildInterrupted(15)
+            if argv[1:3] == ["image", "rm"] or (
+                argv[1:3] == ["image", "ls"] and "evalve-build-" in argv[-1]
+            ):
+                return subprocess.CompletedProcess(argv, 1, "", "engine unavailable")
+
+        self.programs.override = override
+        with self.assertRaisesRegex(
+            build.BuildInterrupted, "SIGTERM.*Could not clean up.*evalve-build-"
+        ) as error:
+            self.execute()
+        self.assertEqual(error.exception.signum, 15)
+
     def test_directory_cleanup_failure_reports_the_retained_image(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

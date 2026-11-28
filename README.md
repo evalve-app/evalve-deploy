@@ -122,6 +122,8 @@ addresses, must use HTTPS.
 The context is `git archive` of the current commit, from the repository root.
 Commit or remove pending changes first; ignored, untracked files such as a
 local `.env` are excluded. Submodules and Git LFS files are currently refused.
+Safe archive extraction also refuses committed symlinks with absolute targets
+or targets outside the archived repository; use relative links within it.
 The Dockerfile is trusted project code and may download dependencies: this
 certifies the committed context and the worker checks, not reproducibility.
 
@@ -160,14 +162,20 @@ source directories and parent ownership. Mutable targets and broken or cyclic
 links are refused with the source path in the error. The final image scan also
 refuses any uid-1000-owned path outside `/tmp/evalve`, even if its current mode
 is read-only; runtime paths under `/proc`, `/sys` and `/dev` remain excluded.
+Source paths and link chains cannot use `/tmp/evalve` or its contents, even
+when protected in the team image: the final layer gives that directory to the
+worker. Keep the working directory and source targets outside that private area.
 Evalve removes its temporary files,
 check containers and intermediate image references on success, failure or
 interruption, while retaining the successful named image, pulled base and
 normal engine cache. Cleanup failures produce a nonzero exit and identify
 resources needing removal, including the final image name if one was kept.
-On SIGTERM or SIGHUP, the CLI stops its active child process group and runs
-the same cleanup, then exits with `128 + signal number`. Inherited ignored
-signals stay ignored. SIGKILL and machine failure cannot run cleanup.
+On SIGTERM, SIGHUP or SIGINT, the CLI stops its active child process group and
+runs the same cleanup. Signals arriving during cleanup are deferred until all
+engine and directory removals finish; further signals do not abort cleanup.
+The first interruption determines the exit code (`128 + signal number`), even
+if cleanup also fails. Errors name retained resources and any validated image.
+Inherited ignored signals stay ignored. SIGKILL and machine failure cannot run cleanup.
 The full invocation UUID in each final tag keeps concurrent builds of the
 same commit in the same second from replacing each other's names.
 

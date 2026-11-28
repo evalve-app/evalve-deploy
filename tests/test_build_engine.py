@@ -64,6 +64,14 @@ RUN groupadd --gid 1000 kitaru && useradd --uid 1000 --gid 1000 kitaru \\
                         "RUN mkdir /tmp/evalve && touch /tmp/evalve/module.py && chmod 0444 /tmp/evalve/module.py && ln -s /tmp/evalve/module.py /app/module.py\n",
                     ),
                     (
+                        "locked-private-target",
+                        "RUN chmod 0755 /tmp && mkdir /tmp/evalve && touch /tmp/evalve/module.py && ln -s /tmp/evalve/module.py /app/module.py\n",
+                    ),
+                    (
+                        "locked-private-parent-target",
+                        "RUN chmod -R go-w /tmp && mkdir /tmp/evalve && ln -s /tmp /app/agent\n",
+                    ),
+                    (
                         "nested-target",
                         "RUN mkdir /opt/agent /tmp/evalve && touch /tmp/evalve/module.py && chmod 0444 /tmp/evalve/module.py && ln -s /tmp/evalve/module.py /opt/agent/module.py && ln -s /opt/agent /app/agent\n",
                     ),
@@ -87,6 +95,11 @@ RUN groupadd --gid 1000 kitaru && useradd --uid 1000 --gid 1000 kitaru \\
                                 engine, linked, layers, "0.0.0", "/app"
                             )
                 nonroot_source = (
+                    (
+                        "locked-private-working-dir",
+                        "RUN chmod 0755 /tmp && mkdir -p /tmp/evalve/src\n",
+                        "/tmp/evalve/src",
+                    ),
                     (
                         "owned-file",
                         "RUN touch /app/owned.py && chown 1000:1000 /app/owned.py && chmod 0444 /app/owned.py\n",
