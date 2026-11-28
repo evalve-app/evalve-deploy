@@ -11,15 +11,18 @@ from evalve.aws import Aws, AwsError
 # has finished its writes before down takes the database snapshot.
 BACKEND_UNIT = "evalve-backend.service"
 IF_BACKEND = f"if systemctl cat {BACKEND_UNIT} >/dev/null 2>&1; then"
-DRAIN = [
+DRAIN_BACKEND = [
     "systemctl stop evalve-refresh.timer evalve-refresh.service",
     f"{IF_BACKEND} systemctl stop {BACKEND_UNIT}; fi",
     "running=$(docker ps --filter name=^/evalve-backend$ --format '{{.ID}}')",
     'test -z "$running"',
+]
+DRAIN_KITARU = [
     "systemctl stop evalve-kitaru.service",
     "running=$(docker ps --filter name=^/evalve-kitaru$ --format '{{.ID}}')",
     'test -z "$running"',
 ]
+DRAIN = DRAIN_BACKEND + DRAIN_KITARU
 BACKEND_IMAGE_FILE = "/etc/evalve/backend-image.env"
 
 
@@ -201,6 +204,42 @@ def start(aws: Aws, instance_id: str) -> None:
     if state != "running":
         aws.call("ec2", "wait", "instance-running", "--instance-ids", instance_id)
     run_server_command(aws, instance_id, START)
+
+
+def request_loop_task_stops(
+    aws: Aws, cluster: str | None, *, action: str
+) -> set[str]:
+    """Request shutdown and return the task ARNs that still need to be checked."""
+    if not cluster:
+        return set()
+
+    # ListTasks filters by desired status. A task with desired status STOPPED
+    # may still be active, including on a retry after an earlier drain.
+    arns = set()
+    for status in ("RUNNING", "STOPPED"):
+        result = aws.call(
+            "ecs", "list-tasks", "--cluster", cluster, "--desired-status", status
+        )
+        arns.update(result["taskArns"])
+
+    ordered = sorted(arns)
+    active = set()
+    for offset in range(0, len(ordered), 100):
+        batch = ordered[offset : offset + 100]
+        result = aws.call("ecs", "describe-tasks", "--cluster", cluster, "--tasks", *batch)
+        tasks = {task["taskArn"]: task for task in result["tasks"]}
+        if tasks.keys() != set(batch):
+            raise EvalveError("ECS could not verify the status of all Loop tasks.")
+        for arn, task in tasks.items():
+            if task["lastStatus"] == "STOPPED":
+                continue
+            if task["desiredStatus"] != "STOPPED":
+                aws.call(
+                    "ecs", "stop-task", "--cluster", cluster, "--task", arn,
+                    "--reason", f"evalve {action}",
+                )
+            active.add(arn)
+    return active
 
 
 def stop(

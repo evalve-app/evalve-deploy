@@ -183,6 +183,36 @@ class PowerTest(unittest.TestCase):
             " systemctl start evalve-backend.service; fi",
         )
 
+    def test_loop_task_stop_requests_track_tasks_already_draining(self):
+        tasks = [
+            {"taskArn": "active", "desiredStatus": "RUNNING", "lastStatus": "RUNNING"},
+            {"taskArn": "draining", "desiredStatus": "STOPPED", "lastStatus": "STOPPING"},
+            {"taskArn": "finished", "desiredStatus": "STOPPED", "lastStatus": "STOPPED"},
+        ]
+        for action in ("stop", "down"):
+            with self.subTest(action=action):
+                aws = Mock()
+                aws.call.side_effect = [
+                    {"taskArns": ["active"]},
+                    {"taskArns": ["draining", "finished"]},
+                    {"tasks": tasks},
+                    {},
+                ]
+                self.assertEqual(
+                    power.request_loop_task_stops(aws, "evalve", action=action),
+                    {"active", "draining"},
+                )
+                self.assertEqual(aws.call.call_count, 4)
+                aws.call.assert_called_with(
+                    "ecs", "stop-task", "--cluster", "evalve", "--task", "active",
+                    "--reason", f"evalve {action}",
+                )
+
+    def test_loop_task_stop_requests_skip_ecs_without_a_cluster(self):
+        aws = Mock()
+        self.assertEqual(power.request_loop_task_stops(aws, None, action="stop"), set())
+        aws.call.assert_not_called()
+
     def test_stop_never_sends_ec2_stop_after_failed_drain(self):
         aws = Mock()
         with (
