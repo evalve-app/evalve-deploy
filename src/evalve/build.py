@@ -59,6 +59,9 @@ FIND_WRITABLE = [
     "-writable",
     "-print",
 ]
+# Keep the original writable-path scan unchanged, and also catch paths whose
+# owner could chmod them back to writable. Runtime/private paths stay pruned.
+FIND_WORKER_OWNED = [*FIND_WRITABLE[:-2], "-uid", "1000", "-print"]
 
 
 class BuildInterrupted(KeyboardInterrupt):
@@ -690,6 +693,7 @@ for value in sys.argv[1:]:
             raise EvalveError(
                 f"Remove .env files from {path} in the Dockerfile. Do not copy secrets into an agent image."
             )
+    check_source_links(engine, image, paths, tools_message)
     if (
         engine.check(image, "/usr/bin/timeout", "--version").returncode
         or engine.check(image, "/usr/local/bin/python3", "--version").returncode
@@ -697,11 +701,96 @@ for value in sys.argv[1:]:
         raise EvalveError(tools_message)
 
 
-def check_final_image(engine: Engine, image: str) -> None:
-    result = engine.check(image, "find", *FIND_WRITABLE)
+def check_source_links(
+    engine: Engine, image: str, paths: list[str], tools_message: str
+) -> None:
+    # Inspect the reachable source graph separately; the find scans retain
+    # their non-following behavior. No source contents or /proc files are read.
+    script = """import os, pathlib, stat, sys
+visited = set()
+active = set()
+
+def fail(path, reason):
+    print(str(path) + ': ' + reason)
+    raise SystemExit(1)
+
+def resolve_source(path, location, resolving=frozenset()):
+    current = pathlib.Path('/')
+    for part in path.parts[1:]:
+        if not current.is_dir():
+            fail(location, 'source symlink has a non-directory parent: ' + str(current))
+        current = current.parent if part == '..' else current / part
+        try:
+            info = current.lstat()
+        except OSError:
+            fail(location, 'source symlink is broken or unresolved: ' + str(current))
+        if info.st_uid != 0:
+            fail(location, 'source target or parent is not root-owned: ' + str(current))
+        if stat.S_ISLNK(info.st_mode):
+            if current in resolving:
+                fail(location, 'source symlink is cyclic: ' + str(current))
+            try:
+                target = pathlib.Path(os.readlink(current))
+            except OSError:
+                fail(location, 'cannot inspect source symlink: ' + str(current))
+            if not target.is_absolute():
+                target = current.parent / target
+            current = resolve_source(target, location, resolving | {current})
+        elif os.access(current, os.W_OK):
+            fail(location, 'source target or parent is writable: ' + str(current))
+    return current
+
+def visit(path, origin=None):
+    location = origin or path
+    try:
+        info = path.lstat()
+    except OSError:
+        fail(location, 'cannot inspect source path ' + str(path))
+    if info.st_uid != 0:
+        fail(location, 'source target is not root-owned: ' + str(path))
+    if stat.S_ISLNK(info.st_mode):
+        target = resolve_source(path, location)
+        visit(target, location)
+        return
+    if os.access(path, os.W_OK):
+        fail(location, 'source target is writable: ' + str(path))
+    if not stat.S_ISDIR(info.st_mode):
+        return
+    identity = (info.st_dev, info.st_ino)
+    if identity in active:
+        fail(location, 'cyclic source directory link: ' + str(path))
+    if identity in visited:
+        return
+    active.add(identity)
+    try:
+        for child in path.iterdir():
+            visit(child, origin)
+    except OSError:
+        fail(location, 'cannot inspect source directory ' + str(path))
+    active.remove(identity)
+    visited.add(identity)
+
+for value in sys.argv[1:]:
+    path = pathlib.Path(value)
+    resolve_source(path, path)
+    visit(path)
+"""
+    result = engine.check(image, "/usr/local/bin/python3", "-c", script, *paths)
+    if result.returncode in (126, 127):
+        raise EvalveError(tools_message)
+    if result.returncode:
+        details = result.stdout.strip() or "The source graph could not be inspected."
+        raise EvalveError(
+            f"Invalid source symlink or target: {details} "
+            "Keep source targets and their parents root-owned without worker write access; fix broken or cyclic links in the Dockerfile."
+        )
+
+
+def final_scan(engine: Engine, image: str, arguments: list[str], name: str) -> str:
+    result = engine.check(image, "find", *arguments)
     if result.returncode not in (0, 1):
         raise EvalveError(
-            f"The final writable-path check failed (exit {result.returncode}). Check that find can run in the image."
+            f"The final {name} check failed (exit {result.returncode}). Check that find can run in the image."
         )
     errors = result.stderr.splitlines()
     # GNU find's unreadable-directory diagnostics are expected for uid 1000.
@@ -711,11 +800,22 @@ def check_final_image(engine: Engine, image: str) -> None:
         result.returncode == 1 and not errors
     ):
         raise EvalveError(
-            "The final writable-path check could not complete. Only permission-denied find diagnostics are expected."
+            f"The final {name} check could not complete. Only permission-denied find diagnostics are expected."
         )
-    if result.stdout:
+    return result.stdout
+
+
+def check_final_image(engine: Engine, image: str) -> None:
+    writable = final_scan(engine, image, FIND_WRITABLE, "writable-path")
+    if writable:
         raise EvalveError(
-            f"The worker user can write these paths: {result.stdout.strip()}. In an agent image, only /tmp/evalve can be written. Give the paths to root in the Dockerfile, with no write access for other users."
+            f"The worker user can write these paths: {writable.strip()}. In an agent image, only /tmp/evalve can be written. Give the paths to root in the Dockerfile, with no write access for other users."
+        )
+    owned = final_scan(engine, image, FIND_WORKER_OWNED, "ownership")
+    if owned:
+        raise EvalveError(
+            f"The image contains worker-owned paths outside /tmp/evalve: {owned.strip()}. "
+            "Their owner can restore write access with chmod. Give these paths to root in the Dockerfile."
         )
 
 

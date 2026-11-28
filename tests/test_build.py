@@ -541,6 +541,22 @@ class BuildTest(unittest.TestCase):
                 else:
                     build.check_final_image(engine, "final")
 
+    def test_final_scan_refuses_worker_owned_readonly_paths(self):
+        engine = Mock()
+
+        def check(image, entrypoint, *arguments):
+            if "-uid" in arguments:
+                return subprocess.CompletedProcess(
+                    [], 1, "/data\n", "find: '/root': Permission denied\n"
+                )
+            return subprocess.CompletedProcess(
+                [], 1, "", "find: '/root': Permission denied\n"
+            )
+
+        engine.check.side_effect = check
+        with self.assertRaisesRegex(EvalveError, "owned.* /data"):
+            build.check_final_image(engine, "final")
+
     def test_timeout_removes_the_check_container_and_intermediate_image(self):
         def override(argv, kwargs):
             if argv[1:2] == ["run"]:

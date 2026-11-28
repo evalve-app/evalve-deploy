@@ -155,6 +155,11 @@ captured. Source-tree checks use `find` without following symlinks.
 They require root ownership of the source files, directories and parents,
 including files whose current mode is read-only: a file owner can restore
 write access with `chmod`.
+Source symlinks get a separate check of their full target chains, reachable
+source directories and parent ownership. Mutable targets and broken or cyclic
+links are refused with the source path in the error. The final image scan also
+refuses any uid-1000-owned path outside `/tmp/evalve`, even if its current mode
+is read-only; runtime paths under `/proc`, `/sys` and `/dev` remain excluded.
 Evalve removes its temporary files,
 check containers and intermediate image references on success, failure or
 interruption, while retaining the successful named image, pulled base and

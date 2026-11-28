@@ -36,12 +36,56 @@ RUN groupadd --gid 1000 kitaru && useradd --uid 1000 --gid 1000 kitaru \\
     && printf 'Name: kitaru\\nVersion: 0.0.0\\n' > /usr/local/lib/python3.11/site-packages/kitaru-0.0.0.dist-info/METADATA \\
     && printf '#!/bin/sh\\n[ "$*" = "worker start --help" ]\\n' > /app/.venv/bin/kitaru \\
     && chmod 0555 /app/.venv/bin/kitaru \\
-    && ln -s loop /app/loop \\
     && chown -R root:root /app && chmod -R go-w /app \\
     && touch /tmp/world-writable.lock && chmod 0666 /tmp/world-writable.lock
 """)
                 team = engine.build_image(directory, "Dockerfile", "team")
                 build.check_team_image(engine, team, layers, "0.0.0", "/app")
+                (directory / "Dockerfile.safe-links").write_text(
+                    f"FROM {team}\nRUN mkdir /opt/agent && touch /opt/agent/module.py "
+                    "&& ln -s /opt/agent/module.py /app/module.py "
+                    "&& ln -s /opt/agent /app/agent\n"
+                )
+                safe_links = engine.build_image(
+                    directory, "Dockerfile.safe-links", "safe-links"
+                )
+                build.check_team_image(engine, safe_links, layers, "0.0.0", "/app")
+                source_links = (
+                    (
+                        "owned-target",
+                        "RUN mkdir /opt/agent && touch /opt/agent/module.py && chown 1000:1000 /opt/agent/module.py && chmod 0444 /opt/agent/module.py && ln -s /opt/agent/module.py /app/module.py\n",
+                    ),
+                    (
+                        "owned-target-parent",
+                        "RUN mkdir /opt/agent && touch /opt/agent/module.py && chmod 0444 /opt/agent/module.py && chown 1000:1000 /opt/agent && chmod 0555 /opt/agent && ln -s /opt/agent/module.py /app/module.py\n",
+                    ),
+                    (
+                        "private-target",
+                        "RUN mkdir /tmp/evalve && touch /tmp/evalve/module.py && chmod 0444 /tmp/evalve/module.py && ln -s /tmp/evalve/module.py /app/module.py\n",
+                    ),
+                    (
+                        "nested-target",
+                        "RUN mkdir /opt/agent /tmp/evalve && touch /tmp/evalve/module.py && chmod 0444 /tmp/evalve/module.py && ln -s /tmp/evalve/module.py /opt/agent/module.py && ln -s /opt/agent /app/agent\n",
+                    ),
+                    (
+                        "mutable-link-chain",
+                        "RUN mkdir /opt/agent /tmp/evalve && touch /opt/agent/module.py && ln -s /opt/agent/module.py /tmp/evalve/alias.py && ln -s /tmp/evalve/alias.py /app/module.py\n",
+                    ),
+                    ("broken-target", "RUN ln -s /opt/missing.py /app/module.py\n"),
+                    ("cyclic-target", "RUN ln -s module.py /app/module.py\n"),
+                    ("directory-cycle", "RUN ln -s /app /app/agent\n"),
+                )
+                for name, instruction in source_links:
+                    with self.subTest(source_link=name):
+                        path = f"Dockerfile.{name}"
+                        (directory / path).write_text(f"FROM {team}\n{instruction}")
+                        linked = engine.build_image(directory, path, name)
+                        with self.assertRaisesRegex(
+                            EvalveError, "/app/(module.py|agent)"
+                        ):
+                            build.check_team_image(
+                                engine, linked, layers, "0.0.0", "/app"
+                            )
                 nonroot_source = (
                     (
                         "owned-file",
@@ -127,6 +171,26 @@ RUN groupadd --gid 1000 kitaru && useradd --uid 1000 --gid 1000 kitaru \\
                 )
                 final = engine.build_image(final_context, "Dockerfile", "final")
                 build.check_final_image(engine, final)
+                for name, instruction in (
+                    (
+                        "owned-data-directory",
+                        "RUN mkdir /data && chown 1000:1000 /data && chmod 0555 /data\n",
+                    ),
+                    (
+                        "owned-data-file",
+                        "RUN touch /opt/data && chown 1000:1000 /opt/data && chmod 0444 /opt/data\n",
+                    ),
+                ):
+                    with self.subTest(final_owner=name):
+                        path = f"Dockerfile.{name}"
+                        (directory / path).write_text(
+                            f"FROM {final}\nUSER root\n{instruction}USER 1000\n"
+                        )
+                        owned = engine.build_image(directory, path, name)
+                        with self.assertRaisesRegex(
+                            EvalveError, "owned.*(/data|/opt/data)"
+                        ):
+                            build.check_final_image(engine, owned)
                 code = """import os
 from pathlib import Path
 Path('/tmp/evalve/success').write_text('yes')
