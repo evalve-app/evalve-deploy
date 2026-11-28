@@ -542,6 +542,28 @@ class ShutdownTest(unittest.TestCase):
         self.assertNotIn("snapshot", self.events)
         self.assertIn("Loop tasks stopped: 1", output)
 
+    def test_down_resumes_destroy_when_recorded_ecs_cluster_is_missing(self):
+        with self.assertRaisesRegex(EvalveError, "Terraform interrupted"):
+            self.invoke(destroy_fails=True)
+        self.documents[STATE_KEY]["outputs"]["ecs_cluster_name"] = {"value": "evalve"}
+        self.aws.call.reset_mock()
+        self.aws.call.side_effect = [
+            {},
+            AwsError("ecs list-tasks", "ClusterNotFoundException"),
+        ]
+
+        self.events.clear()
+        output = self.invoke()
+
+        self.assertEqual(self.aws.call.call_count, 2)
+        self.aws.call.assert_called_with(
+            "ecs", "list-tasks", "--cluster", "evalve", "--desired-status", "RUNNING"
+        )
+        self.assertIn("Loop tasks stopped: 0", output)
+        self.assertIn("destroy", self.events)
+        self.assertNotIn("snapshot", self.events)
+        self.assertNotIn(lifecycle.OPERATION_KEY, self.documents)
+
     def test_backend_image_is_saved_for_restore(self):
         image = "ghcr.io/evalve-app/evalve-backend@sha256:" + "0" * 64
         deployment = self.documents[STATE_KEY]["outputs"]["deployment"]

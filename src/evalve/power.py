@@ -281,8 +281,14 @@ def wait_for_loop_tasks(aws: Aws, cluster: str, task_arns: set[str]) -> int:
 
 
 def drain_loop_tasks(aws: Aws, cluster: str, *, action: str) -> int:
-    task_arns = request_loop_task_stops(aws, cluster, action=action)
-    return wait_for_loop_tasks(aws, cluster, task_arns)
+    try:
+        task_arns = request_loop_task_stops(aws, cluster, action=action)
+        return wait_for_loop_tasks(aws, cluster, task_arns)
+    except AwsError as exc:
+        # A manually removed cluster may still be recorded in Terraform state.
+        if action == "down" and exc.code == "ClusterNotFoundException":
+            return 0
+        raise
 
 
 def stop(
