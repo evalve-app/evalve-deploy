@@ -1,11 +1,11 @@
 {
   "kitaru_version": "0.27.6",
   "server_version": "0.27.6",
-  "engine": "docker",
-  "host": "Darwin arm64",
-  "platform": "linux/arm64",
+  "engine": "podman",
+  "host": "Linux x86_64",
+  "platform": "the default of the engine",
   "lock": true,
-  "started": "2026-11-27T20:07:29.197335+00:00",
+  "started": "2026-11-28T14:11:33.333953+00:00",
   "counts": {
     "PASS": 26,
     "FAIL": 0,
@@ -74,8 +74,7 @@
       "status": "INFO",
       "detail": {
         "output": [
-          "/dev/shm",
-          "/dev/mqueue"
+          "/dev/shm"
         ]
       }
     },
@@ -93,14 +92,14 @@
       "status": "PASS",
       "detail": {
         "key_or_credential_variables_in_the_container": "['GPG_KEY']",
-        "job": "job=completed agent:completed#1@01a21e9e evaluator:completed#1@01a21e9e evaluator:completed#1@01a21e9e",
+        "job": "job=completed agent:completed#1@01a2227f evaluator:completed#1@01a2227f evaluator:completed#1@01a2227f",
         "worker_log_tail": [
-          "2026-11-27 20:07:41,837 kitaru.worker.task_runner INFO Task 01a21e9e-dc12-7729-82c1-e911fd5f75d4 completed.",
-          "2026-11-27 20:07:42,906 httpx INFO HTTP Request: POST http://kcc-2de935-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\"",
-          "2026-11-27 20:07:42,914 httpx INFO HTTP Request: GET http://kcc-2de935-server:8000/api/v1/jobs/01a21e9e-d738-70eb-a965-946027c6fc5c \"HTTP/1.1 200 OK\"",
-          "2026-11-27 20:07:42,914 kitaru.worker.worker INFO Job 01a21e9e-d738-70eb-a965-946027c6fc5c settled as completed, ending the claim loop.",
-          "2026-11-27 20:07:42,914 kitaru.worker.worker INFO Worker kcc-01a21e9e stopped.",
-          "{\"schema_version\":\"1\",\"command\":\"worker.start\",\"ok\":true,\"warnings\":[],\"links\":{},\"next_actions\":[],\"item\":{\"name\":null,\"id\":\"01a21e9e-d75f-72ae-801f-6603d0b850e0\",\"concurrency\":10,\"claim_batch_size\":null,\"status\":\"stopped\",\"server_record\":\"retained_until_stale\",\"stop_reason\":\"completed\"},\"event\":\"stopped\"}"
+          "2026-11-28 14:12:18,046 kitaru.worker.task_runner INFO Task 01a2227f-c237-709c-bef6-966ee053f69f completed.",
+          "2026-11-28 14:12:19,978 httpx INFO HTTP Request: POST http://kcc-38faa7-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\"",
+          "2026-11-28 14:12:19,999 httpx INFO HTTP Request: GET http://kcc-38faa7-server:8000/api/v1/jobs/01a2227f-a803-74be-a655-2e3cf8a2db90 \"HTTP/1.1 200 OK\"",
+          "2026-11-28 14:12:20,000 kitaru.worker.worker INFO Job 01a2227f-a803-74be-a655-2e3cf8a2db90 settled as completed, ending the claim loop.",
+          "2026-11-28 14:12:20,000 kitaru.worker.worker INFO Worker kcc-01a2227f stopped.",
+          "{\"schema_version\":\"1\",\"command\":\"worker.start\",\"ok\":true,\"warnings\":[],\"links\":{},\"next_actions\":[],\"item\":{\"name\":null,\"id\":\"01a2227f-a8e2-7152-9adc-cb66f17dc8fb\",\"concurrency\":10,\"claim_batch_size\":null,\"status\":\"stopped\",\"server_record\":\"retained_until_stale\",\"stop_reason\":\"completed\"},\"event\":\"stopped\"}"
         ]
       }
     },
@@ -109,7 +108,7 @@
       "fact": "The job-scoped worker claims the agent task and each evaluator task of its job",
       "status": "PASS",
       "detail": {
-        "tasks": "job=completed agent:completed#1@01a21e9e evaluator:completed#1@01a21e9e evaluator:completed#1@01a21e9e"
+        "tasks": "job=completed agent:completed#1@01a2227f evaluator:completed#1@01a2227f evaluator:completed#1@01a2227f"
       }
     },
     {
@@ -118,8 +117,8 @@
       "status": "PASS",
       "detail": {
         "exit_code": 0,
-        "seconds_from_last_task_end_to_exit": 1.16,
-        "seconds_from_start_to_exit": 6.72
+        "seconds_from_last_task_end_to_exit": 2.34,
+        "seconds_from_start_to_exit": 18.21
       }
     },
     {
@@ -175,9 +174,9 @@
       "status": "PASS",
       "detail": {
         "openai_version": "3.49.0",
-        "openai_file": "/tmp/evalve/cache/uv/archive-v0/9KCgOMqToma2ZW67/lib/python3.13/site-packages/openai/__init__.py",
+        "openai_file": "/tmp/evalve/cache/uv/archive-v0/0Aqcsna7ru2rtvY8/lib/python3.13/site-packages/openai/__init__.py",
         "uv_cache_dir": "/tmp/evalve/cache/uv",
-        "home": "/tmp/evalve/replays/01a21e9e-d738-70eb-a965-946027c6fc5c"
+        "home": "/tmp/evalve/replays/01a2227f-a803-74be-a655-2e3cf8a2db90"
       }
     },
     {
@@ -186,11 +185,11 @@
       "status": "PASS",
       "detail": {
         "uid": 1000,
-        "agent_home": "/tmp/evalve/replays/01a21e9e-d738-70eb-a965-946027c6fc5c",
-        "agent_tmpdir": "/tmp/evalve/replays/01a21e9e-d738-70eb-a965-946027c6fc5c",
+        "agent_home": "/tmp/evalve/replays/01a2227f-a803-74be-a655-2e3cf8a2db90",
+        "agent_tmpdir": "/tmp/evalve/replays/01a2227f-a803-74be-a655-2e3cf8a2db90",
         "agent_cwd": "/app",
-        "evaluator_home": "/tmp/evalve/replays/01a21e9e-d738-70eb-a965-946027c6fc5c",
-        "evaluator_cwd": "/tmp/evalve/replays/01a21e9e-d738-70eb-a965-946027c6fc5c",
+        "evaluator_home": "/tmp/evalve/replays/01a2227f-a803-74be-a655-2e3cf8a2db90",
+        "evaluator_cwd": "/tmp/evalve/replays/01a2227f-a803-74be-a655-2e3cf8a2db90",
         "writes_in_the_source_tree": {
           "/app": "EACCES",
           "/app/agent": "EACCES",
@@ -209,12 +208,12 @@
           {
             "comm": "sh",
             "environ_readable": true,
-            "worker_id": "01a21e9e-d75f-72ae-801f-6603d0b850e0"
+            "worker_id": "01a2227f-a8e2-7152-9adc-cb66f17dc8fb"
           },
           {
             "comm": "kitaru",
             "environ_readable": true,
-            "worker_id": "01a21e9e-d75f-72ae-801f-6603d0b850e0"
+            "worker_id": "01a2227f-a8e2-7152-9adc-cb66f17dc8fb"
           },
           {
             "comm": "python3",
@@ -238,7 +237,7 @@
       "status": "INFO",
       "detail": {
         "exit_code": 0,
-        "job": "job=completed agent:completed#1@01a21e9e evaluator:completed#1@01a21e9e evaluator:completed#1@01a21e9e"
+        "job": "job=completed agent:completed#1@01a2227f evaluator:completed#1@01a2227f evaluator:completed#1@01a2227f"
       }
     },
     {
@@ -247,18 +246,14 @@
       "status": "INFO",
       "detail": {
         "files": {
+          "/tmp/evalve/cache/kitaru-blobs/\u2026": 6,
           "/tmp/evalve/cache/kitaru-payloads/\u2026": 4,
           "/tmp/evalve/cache/uv/\u2026": 9851,
-          "/tmp/evalve/cache/kitaru-blobs/\u2026": 6,
           "/tmp/evalve/kcc/\u2026": 5,
-          "/dev/shm/kcc-marker-01a21e9f-2290-7009-89d3-86af06fd0dfa": 1,
-          "/dev/shm/kcc-marker-01a21e9f-2290-7009-89d3-86aef7ad95eb": 1,
-          "/dev/shm/kcc-marker-01a21e9f-0672-77f6-980e-06df86d0ddc3": 1,
-          "/dev/shm/kcc-marker-01a21e9f-0672-77f6-980e-06e070ee9def": 1,
-          "/dev/mqueue/kcc-marker-01a21e9f-2290-7009-89d3-86af06fd0dfa": 1,
-          "/dev/mqueue/kcc-marker-01a21e9f-2290-7009-89d3-86aef7ad95eb": 1,
-          "/dev/mqueue/kcc-marker-01a21e9f-0672-77f6-980e-06df86d0ddc3": 1,
-          "/dev/mqueue/kcc-marker-01a21e9f-0672-77f6-980e-06e070ee9def": 1
+          "/dev/shm/kcc-marker-01a22280-75b0-77b2-b84a-5d64a9ad8b66": 1,
+          "/dev/shm/kcc-marker-01a22280-75b0-77b2-b84a-5d65325b9e6c": 1,
+          "/dev/shm/kcc-marker-01a22280-2e60-70b3-9223-e9c518982a18": 1,
+          "/dev/shm/kcc-marker-01a22280-2e60-70b3-9223-e9c621fc51b8": 1
         }
       }
     },
@@ -276,20 +271,18 @@
       "status": "INFO",
       "detail": {
         "paths_with_markers": {
-          "/dev/shm": 2,
-          "/dev/mqueue": 2,
-          "/tmp/evalve/cache/uv": 2,
-          "/tmp/evalve/cache/kitaru-blobs": 2,
-          "/tmp/evalve/cache/kitaru-payloads": 2
+          "/dev/shm": 3,
+          "/tmp/evalve/cache/uv": 3,
+          "/tmp/evalve/cache/kitaru-blobs": 3,
+          "/tmp/evalve/cache/kitaru-payloads": 3
         },
         "places_agent_code_can_write": [
-          "/dev/mqueue",
           "/dev/shm",
           "/tmp/evalve/cache/kitaru-blobs",
           "/tmp/evalve/cache/kitaru-payloads",
           "/tmp/evalve/cache/uv",
-          "/tmp/evalve/replays/01a21e9f-2290-7009-89d3-86ac8d1df478",
-          "/tmp/evalve/replays/01a21e9f-2290-7009-89d3-86ad9418b571"
+          "/tmp/evalve/replays/01a22280-75b0-77b2-b84a-5d62b579b92b",
+          "/tmp/evalve/replays/01a22280-75b0-77b2-b84a-5d633b700446"
         ]
       }
     },
@@ -321,9 +314,9 @@
       "detail": {
         "max_directories_visible": 2,
         "example": [
-          "01a21e9f-0672-77f6-980e-06dda3d9f5b6",
-          "01a21e9f-0672-77f6-980e-06dee38059db",
-          "01a21e9f-2290-7009-89d3-86ac8d1df478"
+          "01a22280-2e60-70b3-9223-e9c398f12075",
+          "01a22280-2e60-70b3-9223-e9c4ddad2228",
+          "01a22280-75b0-77b2-b84a-5d62b579b92b"
         ]
       }
     },
@@ -332,7 +325,7 @@
       "fact": "10 `uv run` commands at the same time are safe on one cold uv cache (the command form of Kitaru)",
       "status": "PASS",
       "detail": {
-        "seconds": 4.6,
+        "seconds": 21.5,
         "exit_codes": [
           0,
           0,
@@ -377,7 +370,7 @@
           0,
           0
         ],
-        "seconds": 9.9,
+        "seconds": 46.2,
         "failed_tasks": []
       }
     },
@@ -386,7 +379,7 @@
       "fact": "Peak memory of the container for the 10 workers (cgroup `memory.peak`, a local number, not Fargate)",
       "status": "INFO",
       "detail": {
-        "megabytes": 3864
+        "megabytes": 1810
       }
     },
     {
@@ -395,15 +388,15 @@
       "status": "PASS",
       "detail": {
         "exit_code": 143,
-        "seconds_from_sigterm_to_exit": 17.4,
-        "job": "job=running agent:completed#1@01a21e9f evaluator:pending#0@none evaluator:pending#0@none",
+        "seconds_from_sigterm_to_exit": 19.5,
+        "job": "job=running agent:completed#1@01a22281 evaluator:pending#0@none evaluator:pending#0@none",
         "agent_signals": [],
         "worker_log_tail": [
-          "2026-11-27 20:08:36,577 httpx INFO HTTP Request: POST http://kcc-2de935-server:8000/api/v1/workers/01a21e9f-72e5-743f-a8cd-1415ad127296/heartbeat \"HTTP/1.1 200 OK\"",
-          "2026-11-27 20:08:37,144 httpx INFO HTTP Request: PATCH http://kcc-2de935-server:8000/api/v1/tasks/01a21e9f-72da-77bf-ace6-db3c793a3adc \"HTTP/1.1 200 OK\"",
-          "2026-11-27 20:08:37,144 kitaru.worker.task_runner INFO Task 01a21e9f-72da-77bf-ace6-db3c793a3adc completed.",
-          "2026-11-27 20:08:37,144 kitaru.worker.worker INFO Worker kcc-01a21e9f stopped.",
-          "{\"schema_version\":\"1\",\"command\":\"worker.start\",\"ok\":true,\"warnings\":[],\"links\":{},\"next_actions\":[],\"item\":{\"name\":null,\"id\":\"01a21e9f-72e5-743f-a8cd-1415ad127296\",\"concurrency\":10,\"claim_batch_size\":null,\"status\":\"stopped\",\"server_record\":\"retained_until_stale\",\"stop_reason\":\"sigterm\"},\"event\":\"stopped\"}"
+          "2026-11-28 14:14:43,255 httpx INFO HTTP Request: POST http://kcc-38faa7-server:8000/api/v1/workers/01a22281-c301-75fe-9152-11d465d6f7db/heartbeat \"HTTP/1.1 200 OK\"",
+          "2026-11-28 14:14:45,807 httpx INFO HTTP Request: PATCH http://kcc-38faa7-server:8000/api/v1/tasks/01a22281-c2ca-75a4-8232-a4a491737e2c \"HTTP/1.1 200 OK\"",
+          "2026-11-28 14:14:45,808 kitaru.worker.task_runner INFO Task 01a22281-c2ca-75a4-8232-a4a491737e2c completed.",
+          "2026-11-28 14:14:45,809 kitaru.worker.worker INFO Worker kcc-01a22281 stopped.",
+          "{\"schema_version\":\"1\",\"command\":\"worker.start\",\"ok\":true,\"warnings\":[],\"links\":{},\"next_actions\":[],\"item\":{\"name\":null,\"id\":\"01a22281-c301-75fe-9152-11d465d6f7db\",\"concurrency\":10,\"claim_batch_size\":null,\"status\":\"stopped\",\"server_record\":\"retained_until_stale\",\"stop_reason\":\"sigterm\"},\"event\":\"stopped\"}"
         ]
       }
     },
@@ -423,19 +416,19 @@
       "status": "PASS",
       "detail": {
         "exit_code": 143,
-        "seconds_from_second_sigterm_to_exit": 0.2,
+        "seconds_from_second_sigterm_to_exit": 0.6,
         "agent_task": "canceled (None)",
         "job_after": [
-          "   0.0s job=canceled agent:canceled#1@01a21e9f"
+          "   0.0s job=canceled agent:canceled#1@01a22282"
         ],
         "signals_that_the_agent_process_got": "",
         "worker_log_tail": [
-          "2026-11-27 20:08:41,641 kitaru.worker.worker INFO Draining 1 running task(s).",
+          "2026-11-28 14:14:53,813 kitaru.worker.worker INFO Draining 1 running task(s).",
           "{\"schema_version\":\"1\",\"command\":\"worker.start\",\"ok\":true,\"event\":\"canceling\",\"item\":{\"reason\":\"sigterm\"}}",
-          "2026-11-27 20:08:43,772 kitaru.worker.task_runner INFO Task 01a21e9f-c736-755a-b0e2-67d7fae4678d canceled by the server.",
-          "2026-11-27 20:08:43,782 httpx INFO HTTP Request: PATCH http://kcc-2de935-server:8000/api/v1/tasks/01a21e9f-c736-755a-b0e2-67d7fae4678d \"HTTP/1.1 200 OK\"",
-          "2026-11-27 20:08:43,782 kitaru.worker.worker INFO Worker kcc-01a21e9f stopped.",
-          "{\"schema_version\":\"1\",\"command\":\"worker.start\",\"ok\":true,\"warnings\":[],\"links\":{},\"next_actions\":[],\"item\":{\"name\":null,\"id\":\"01a21e9f-c742-7317-ac77-3b385b7ae5eb\",\"concurrency\":10,\"claim_batch_size\":null,\"status\":\"stopped\",\"server_record\":\"retained_until_stale\",\"stop_reason\":\"sigterm\"},\"event\":\"stopped\"}"
+          "2026-11-28 14:14:56,156 kitaru.worker.task_runner INFO Task 01a22282-2e84-72a3-a7b3-bc312dd73e4a canceled by the server.",
+          "2026-11-28 14:14:56,205 httpx INFO HTTP Request: PATCH http://kcc-38faa7-server:8000/api/v1/tasks/01a22282-2e84-72a3-a7b3-bc312dd73e4a \"HTTP/1.1 200 OK\"",
+          "2026-11-28 14:14:56,207 kitaru.worker.worker INFO Worker kcc-01a22282 stopped.",
+          "{\"schema_version\":\"1\",\"command\":\"worker.start\",\"ok\":true,\"warnings\":[],\"links\":{},\"next_actions\":[],\"item\":{\"name\":null,\"id\":\"01a22282-2eb7-72ab-be00-35f756517606\",\"concurrency\":10,\"claim_batch_size\":null,\"status\":\"stopped\",\"server_record\":\"retained_until_stale\",\"stop_reason\":\"sigterm\"},\"event\":\"stopped\"}"
         ]
       }
     },
@@ -445,21 +438,21 @@
       "status": "PASS",
       "detail": {
         "launcher_signals": [
-          "1795810154.212",
+          "1795875327.509",
           "SIGTERM"
         ],
         "worker_process_alive_20s_after_the_limit": "[True]",
         "worker_log_tail_20s_after_the_limit": [
-          "2026-11-27 20:09:31,569 httpx INFO HTTP Request: POST http://kcc-2de935-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\"",
-          "2026-11-27 20:09:31,573 httpx INFO HTTP Request: GET http://kcc-2de935-server:8000/api/v1/jobs/01a21e9f-e14e-72a1-953a-0dba66de5d84 \"HTTP/1.1 200 OK\"",
-          "2026-11-27 20:09:33,595 httpx INFO HTTP Request: POST http://kcc-2de935-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\"",
-          "2026-11-27 20:09:33,603 httpx INFO HTTP Request: GET http://kcc-2de935-server:8000/api/v1/jobs/01a21e9f-e14e-72a1-953a-0dba66de5d84 \"HTTP/1.1 200 OK\""
+          "2026-11-28 14:15:44,482 httpx INFO HTTP Request: POST http://kcc-38faa7-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\"",
+          "2026-11-28 14:15:44,502 httpx INFO HTTP Request: GET http://kcc-38faa7-server:8000/api/v1/jobs/01a22282-57d8-76c4-98ce-c1a49b5bd33e \"HTTP/1.1 200 OK\"",
+          "2026-11-28 14:15:46,542 httpx INFO HTTP Request: POST http://kcc-38faa7-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\"",
+          "2026-11-28 14:15:46,559 httpx INFO HTTP Request: GET http://kcc-38faa7-server:8000/api/v1/jobs/01a22282-57d8-76c4-98ce-c1a49b5bd33e \"HTTP/1.1 200 OK\""
         ],
         "agent_signals": "",
-        "job_20s_after_the_limit": "job=running agent:running#1@01a21e9f",
+        "job_20s_after_the_limit": "job=running agent:running#1@01a22282",
         "container_exit_code": 137,
-        "container_seconds": 60.2,
-        "job_after_the_container_exit": "job=running agent:running#1@01a21e9f"
+        "container_seconds": 60.5,
+        "job_after_the_container_exit": "job=running agent:running#1@01a22282"
       }
     },
     {
@@ -468,21 +461,21 @@
       "status": "INFO",
       "detail": {
         "launcher_signals": [
-          "1795810214.459",
+          "1795875388.295",
           "SIGTERM"
         ],
         "worker_process_alive_20s_after_the_limit": "[True]",
         "worker_log_tail_20s_after_the_limit": [
-          "2026-11-27 20:10:14,461 kitaru.worker.worker INFO Stop requested, ending the claim loop.",
-          "2026-11-27 20:10:14,461 kitaru.worker.worker INFO Draining 1 running task(s).",
-          "2026-11-27 20:10:15,147 httpx INFO HTTP Request: POST http://kcc-2de935-server:8000/api/v1/workers/01a21ea0-ccae-7747-9cf5-146978bfcf37/heartbeat \"HTTP/1.1 200 OK\"",
-          "2026-11-27 20:10:25,170 httpx INFO HTTP Request: POST http://kcc-2de935-server:8000/api/v1/workers/01a21ea0-ccae-7747-9cf5-146978bfcf37/heartbeat \"HTTP/1.1 200 OK\""
+          "2026-11-28 14:16:28,295 kitaru.worker.worker INFO Stop requested, ending the claim loop.",
+          "2026-11-28 14:16:28,296 kitaru.worker.worker INFO Draining 1 running task(s).",
+          "2026-11-28 14:16:31,841 httpx INFO HTTP Request: POST http://kcc-38faa7-server:8000/api/v1/workers/01a22283-457b-70ef-903d-15c7bb0982e9/heartbeat \"HTTP/1.1 200 OK\"",
+          "2026-11-28 14:16:41,878 httpx INFO HTTP Request: POST http://kcc-38faa7-server:8000/api/v1/workers/01a22283-457b-70ef-903d-15c7bb0982e9/heartbeat \"HTTP/1.1 200 OK\""
         ],
         "agent_signals": "",
-        "job_20s_after_the_limit": "job=running agent:running#1@01a21ea0",
+        "job_20s_after_the_limit": "job=running agent:running#1@01a22283",
         "container_exit_code": 137,
-        "container_seconds": 60.2,
-        "job_after_the_container_exit": "job=running agent:running#1@01a21ea0"
+        "container_seconds": 60.5,
+        "job_after_the_container_exit": "job=running agent:running#1@01a22283"
       }
     },
     {
@@ -490,14 +483,22 @@
       "fact": "The 30 s of `timeout --kill-after=30`: the Supervisor sends SIGTERM one time, and the agent task ends in the 30 s",
       "status": "INFO",
       "detail": {
-        "launcher_signals": [],
-        "worker_process_alive_20s_after_the_limit": "",
-        "worker_log_tail_20s_after_the_limit": [],
+        "launcher_signals": [
+          "1795875449.109",
+          "SIGTERM"
+        ],
+        "worker_process_alive_20s_after_the_limit": "[True]",
+        "worker_log_tail_20s_after_the_limit": [
+          "2026-11-28 14:17:29,109 kitaru.worker.worker INFO Stop requested, ending the claim loop.",
+          "2026-11-28 14:17:29,110 kitaru.worker.worker INFO Draining 1 running task(s).",
+          "2026-11-28 14:17:32,667 httpx INFO HTTP Request: POST http://kcc-38faa7-server:8000/api/v1/workers/01a22284-3318-72ec-a22e-087f02ab4e1d/heartbeat \"HTTP/1.1 200 OK\"",
+          "2026-11-28 14:17:42,732 httpx INFO HTTP Request: POST http://kcc-38faa7-server:8000/api/v1/workers/01a22284-3318-72ec-a22e-087f02ab4e1d/heartbeat \"HTTP/1.1 200 OK\""
+        ],
         "agent_signals": "",
-        "job_20s_after_the_limit": "job=running agent:completed#1@01a21ea1 evaluator:pending#0@none evaluator:pending#0@none",
+        "job_20s_after_the_limit": "job=running agent:running#1@01a22284",
         "container_exit_code": 124,
-        "container_seconds": 50.2,
-        "job_after_the_container_exit": "job=running agent:completed#1@01a21ea1 evaluator:pending#0@none evaluator:pending#0@none"
+        "container_seconds": 51.8,
+        "job_after_the_container_exit": "job=running agent:completed#1@01a22284 evaluator:pending#0@none evaluator:pending#0@none"
       }
     },
     {
@@ -505,10 +506,10 @@
       "fact": "A task that a killed worker held goes back to `pending`, and its job stays `running`",
       "status": "PASS",
       "detail": {
-        "seconds_from_kill_to_pending": 71.9,
+        "seconds_from_kill_to_pending": 66.8,
         "timeline": [
-          "   0.0s job=running agent:running#1@01a21ea2",
-          "  71.9s job=running agent:pending#1@none"
+          "   0.0s job=running agent:running#1@01a22284",
+          "  66.8s job=running agent:pending#1@none"
         ]
       }
     },
@@ -518,7 +519,7 @@
       "status": "INFO",
       "detail": {
         "timeline": [
-          "   0.0s job=running agent:pending#1@none"
+          "   0.1s job=running agent:pending#1@none"
         ]
       }
     },
@@ -528,12 +529,12 @@
       "status": "PASS",
       "detail": {
         "exit_code": 0,
-        "job": "job=completed agent:completed#2@01a21ea2 evaluator:completed#1@01a21ea2 evaluator:completed#1@01a21ea2",
+        "job": "job=completed agent:completed#2@01a22284 evaluator:completed#1@01a22284 evaluator:completed#1@01a22284",
         "worker_log_head": [
-          "{\"schema_version\":\"1\",\"command\":\"worker.start\",\"ok\":true,\"event\":\"starting\",\"item\":{\"name\":null,\"id\":\"01a21ea2-7c3a-75c3-92cb-f2307654b1ca\",\"concurrency\":10,\"claim_batch_size\":null}}",
-          "2026-11-27 20:13:19,768 httpx INFO HTTP Request: GET http://kcc-2de935-server:8000/api/v1/workers/01a21ea2-7c3a-75c3-92cb-f2307654b1ca \"HTTP/1.1 200 OK\"",
-          "2026-11-27 20:13:19,769 kitaru.worker.worker INFO Loaded worker kcc-01a21ea2 (01a21ea2-7c3a-75c3-92cb-f2307654b1ca).",
-          "2026-11-27 20:13:19,777 httpx INFO HTTP Request: POST http://kcc-2de935-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\""
+          "{\"schema_version\":\"1\",\"command\":\"worker.start\",\"ok\":true,\"event\":\"starting\",\"item\":{\"name\":null,\"id\":\"01a22284-fe69-710c-ac6d-4da2e6f36a5d\",\"concurrency\":10,\"claim_batch_size\":null}}",
+          "2026-11-28 14:19:36,448 httpx INFO HTTP Request: GET http://kcc-38faa7-server:8000/api/v1/workers/01a22284-fe69-710c-ac6d-4da2e6f36a5d \"HTTP/1.1 200 OK\"",
+          "2026-11-28 14:19:36,449 kitaru.worker.worker INFO Loaded worker kcc-01a22284 (01a22284-fe69-710c-ac6d-4da2e6f36a5d).",
+          "2026-11-28 14:19:36,526 httpx INFO HTTP Request: POST http://kcc-38faa7-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\""
         ]
       }
     },
@@ -543,28 +544,29 @@
       "status": "PASS",
       "detail": {
         "timeline": [
-          "   0.0s job=running agent:running#1@01a21ea4",
-          " 100.9s job=running agent:completed#1@01a21ea4 evaluator:pending#0@none evaluator:pending#0@none",
-          " 101.9s job=running agent:completed#1@01a21ea4 evaluator:completed#1@01a21ea4 evaluator:running#1@01a21ea4",
-          " 104.0s job=completed agent:completed#1@01a21ea4 evaluator:completed#1@01a21ea4 evaluator:completed#1@01a21ea4"
+          "   0.0s job=running agent:running#1@01a22286",
+          " 102.4s job=running agent:completed#1@01a22286 evaluator:pending#0@none evaluator:pending#0@none",
+          " 103.4s job=running agent:completed#1@01a22286 evaluator:running#1@01a22286 evaluator:running#1@01a22286",
+          " 105.5s job=running agent:completed#1@01a22286 evaluator:completed#1@01a22286 evaluator:running#1@01a22286",
+          " 110.7s job=completed agent:completed#1@01a22286 evaluator:completed#1@01a22286 evaluator:completed#1@01a22286"
         ],
         "exit_codes": [
           0,
           0
         ],
         "first_worker_log_tail": [
-          "2026-11-27 20:15:12,596 httpx INFO HTTP Request: POST http://kcc-2de935-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\"",
-          "2026-11-27 20:15:12,605 httpx INFO HTTP Request: GET http://kcc-2de935-server:8000/api/v1/jobs/01a21ea4-2f2b-7412-82bb-39ebbd0402d6 \"HTTP/1.1 200 OK\"",
-          "2026-11-27 20:15:12,605 kitaru.worker.worker INFO Job 01a21ea4-2f2b-7412-82bb-39ebbd0402d6 settled as completed, ending the claim loop.",
-          "2026-11-27 20:15:12,606 kitaru.worker.worker INFO Worker kcc-01a21ea4 stopped.",
-          "{\"schema_version\":\"1\",\"command\":\"worker.start\",\"ok\":true,\"warnings\":[],\"links\":{},\"next_actions\":[],\"item\":{\"name\":null,\"id\":\"01a21ea4-2f36-74d0-83e4-b36bdf49de2f\",\"concurrency\":10,\"claim_batch_size\":null,\"status\":\"stopped\",\"server_record\":\"retained_until_stale\",\"stop_reason\":\"completed\"},\"event\":\"stopped\"}"
+          "2026-11-28 14:21:44,914 httpx INFO HTTP Request: POST http://kcc-38faa7-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\"",
+          "2026-11-28 14:21:44,939 httpx INFO HTTP Request: GET http://kcc-38faa7-server:8000/api/v1/jobs/01a22286-cdc8-7238-86ea-b6412fb849ea \"HTTP/1.1 200 OK\"",
+          "2026-11-28 14:21:44,941 kitaru.worker.worker INFO Job 01a22286-cdc8-7238-86ea-b6412fb849ea settled as completed, ending the claim loop.",
+          "2026-11-28 14:21:44,941 kitaru.worker.worker INFO Worker kcc-01a22286 stopped.",
+          "{\"schema_version\":\"1\",\"command\":\"worker.start\",\"ok\":true,\"warnings\":[],\"links\":{},\"next_actions\":[],\"item\":{\"name\":null,\"id\":\"01a22286-cdff-7388-aa4b-6442cdff447a\",\"concurrency\":10,\"claim_batch_size\":null,\"status\":\"stopped\",\"server_record\":\"retained_until_stale\",\"stop_reason\":\"completed\"},\"event\":\"stopped\"}"
         ],
         "second_worker_log_tail": [
-          "2026-11-27 20:15:11,689 httpx INFO HTTP Request: POST http://kcc-2de935-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\"",
-          "2026-11-27 20:15:11,696 httpx INFO HTTP Request: GET http://kcc-2de935-server:8000/api/v1/jobs/01a21ea4-2f2b-7412-82bb-39ebbd0402d6 \"HTTP/1.1 200 OK\"",
-          "2026-11-27 20:15:11,697 kitaru.worker.worker INFO Job 01a21ea4-2f2b-7412-82bb-39ebbd0402d6 settled as completed, ending the claim loop.",
-          "2026-11-27 20:15:11,697 kitaru.worker.worker INFO Worker kcc-01a21ea4 stopped.",
-          "{\"schema_version\":\"1\",\"command\":\"worker.start\",\"ok\":true,\"warnings\":[],\"links\":{},\"next_actions\":[],\"item\":{\"name\":null,\"id\":\"01a21ea4-2f36-74d0-83e4-b36bdf49de2f\",\"concurrency\":10,\"claim_batch_size\":null,\"status\":\"stopped\",\"server_record\":\"retained_until_stale\",\"stop_reason\":\"completed\"},\"event\":\"stopped\"}"
+          "2026-11-28 14:21:44,918 httpx INFO HTTP Request: POST http://kcc-38faa7-server:8000/api/v1/tasks/claim \"HTTP/1.1 200 OK\"",
+          "2026-11-28 14:21:44,941 httpx INFO HTTP Request: GET http://kcc-38faa7-server:8000/api/v1/jobs/01a22286-cdc8-7238-86ea-b6412fb849ea \"HTTP/1.1 200 OK\"",
+          "2026-11-28 14:21:44,943 kitaru.worker.worker INFO Job 01a22286-cdc8-7238-86ea-b6412fb849ea settled as completed, ending the claim loop.",
+          "2026-11-28 14:21:44,943 kitaru.worker.worker INFO Worker kcc-01a22286 stopped.",
+          "{\"schema_version\":\"1\",\"command\":\"worker.start\",\"ok\":true,\"warnings\":[],\"links\":{},\"next_actions\":[],\"item\":{\"name\":null,\"id\":\"01a22286-cdff-7388-aa4b-6442cdff447a\",\"concurrency\":10,\"claim_batch_size\":null,\"status\":\"stopped\",\"server_record\":\"retained_until_stale\",\"stop_reason\":\"completed\"},\"event\":\"stopped\"}"
         ]
       }
     },
@@ -576,8 +578,8 @@
         "token_lifetime_seconds": 40,
         "timeline": [
           "   0.0s job=pending agent:pending#0@none",
-          "   1.0s job=running agent:running#1@01a21ea5",
-          "  94.7s job=running agent:pending#1@none"
+          "   4.2s job=running agent:running#1@01a22288",
+          "  96.2s job=running agent:pending#1@none"
         ],
         "job_at_the_end": "job=running agent:pending#1@none",
         "agent_session_recorded": false,
@@ -586,20 +588,20 @@
         "worker_seconds": 330.4,
         "worker_killed_by_the_check": true,
         "worker_log": [
-          "2026-11-27 20:15:53,993 httpx INFO HTTP Request: POST http://kcc-2de935-server:8000/api/v1/workers/01a21ea5-d0e2-764c-813b-2f0be424da4e/heartbeat \"HTTP/1.1 401 Unauthorized\"",
-          "2026-11-27 20:15:53,994 kitaru.worker.heartbeat WARNING Heartbeat failed: 401: Invalid bearer credential.",
-          "2026-11-27 20:15:54,503 httpx INFO HTTP Request: POST http://kcc-2de935-server:8000/api/v1/tasks/claim \"HTTP/1.1 401 Unauthorized\"",
-          "2026-11-27 20:15:54,504 kitaru.worker.worker WARNING Failed to claim tasks: 401: Invalid bearer credential.",
-          "2026-11-27 20:15:56,517 httpx INFO HTTP Request: POST http://kcc-2de935-server:8000/api/v1/tasks/claim \"HTTP/1.1 401 Unauthorized\"",
-          "2026-11-27 20:15:56,518 kitaru.worker.worker WARNING Failed to claim tasks: 401: Invalid bearer credential.",
-          "2026-11-27 20:16:00,530 httpx INFO HTTP Request: POST http://kcc-2de935-server:8000/api/v1/tasks/claim \"HTTP/1.1 401 Unauthorized\"",
-          "2026-11-27 20:16:00,531 kitaru.worker.worker WARNING Failed to claim tasks: 401: Invalid bearer credential."
+          "2026-11-28 14:22:27,416 httpx INFO HTTP Request: POST http://kcc-38faa7-server:8000/api/v1/tasks/claim \"HTTP/1.1 401 Unauthorized\"",
+          "2026-11-28 14:22:27,417 kitaru.worker.worker WARNING Failed to claim tasks: 401: Invalid bearer credential.",
+          "2026-11-28 14:22:29,431 httpx INFO HTTP Request: POST http://kcc-38faa7-server:8000/api/v1/tasks/claim \"HTTP/1.1 401 Unauthorized\"",
+          "2026-11-28 14:22:29,432 kitaru.worker.worker WARNING Failed to claim tasks: 401: Invalid bearer credential.",
+          "2026-11-28 14:22:30,472 httpx INFO HTTP Request: POST http://kcc-38faa7-server:8000/api/v1/workers/01a22288-9765-70ae-9f31-acc4dbaaea64/heartbeat \"HTTP/1.1 401 Unauthorized\"",
+          "2026-11-28 14:22:30,474 kitaru.worker.heartbeat WARNING Heartbeat failed: 401: Invalid bearer credential.",
+          "2026-11-28 14:22:33,444 httpx INFO HTTP Request: POST http://kcc-38faa7-server:8000/api/v1/tasks/claim \"HTTP/1.1 401 Unauthorized\"",
+          "2026-11-28 14:22:33,446 kitaru.worker.worker WARNING Failed to claim tasks: 401: Invalid bearer credential."
         ],
         "worker_log_tail": [
-          "2026-11-27 20:18:56,612 httpx INFO HTTP Request: POST http://kcc-2de935-server:8000/api/v1/tasks/claim \"HTTP/1.1 401 Unauthorized\"",
-          "2026-11-27 20:18:56,612 kitaru.worker.worker WARNING Failed to claim tasks: 401: Invalid bearer credential.",
-          "2026-11-27 20:19:56,632 httpx INFO HTTP Request: POST http://kcc-2de935-server:8000/api/v1/tasks/claim \"HTTP/1.1 401 Unauthorized\"",
-          "2026-11-27 20:19:56,633 kitaru.worker.worker WARNING Failed to claim tasks: 401: Invalid bearer credential."
+          "2026-11-28 14:25:29,539 httpx INFO HTTP Request: POST http://kcc-38faa7-server:8000/api/v1/tasks/claim \"HTTP/1.1 401 Unauthorized\"",
+          "2026-11-28 14:25:29,540 kitaru.worker.worker WARNING Failed to claim tasks: 401: Invalid bearer credential.",
+          "2026-11-28 14:26:29,562 httpx INFO HTTP Request: POST http://kcc-38faa7-server:8000/api/v1/tasks/claim \"HTTP/1.1 401 Unauthorized\"",
+          "2026-11-28 14:26:29,563 kitaru.worker.worker WARNING Failed to claim tasks: 401: Invalid bearer credential."
         ]
       }
     }

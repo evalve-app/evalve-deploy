@@ -1,0 +1,39 @@
+# Host
+$ cat /etc/fedora-release; uname -srm; getenforce; podman --version; crun --version | head -1
+Fedora release 44 (Forty Four)
+Linux 7.3.6-200.fc44.x86_64 x86_64
+Enforcing
+podman version 5.8.9
+crun version 1.30
+
+# The test agent image with the block (--lock), as uid 1000
+$ podman run --rm --init localhost/kcc-agent:0.27.6 sh -c 'id; ls -ld /dev/shm /dev/mqueue; grep -E "mqueue|shm" /proc/mounts; python3 -c <probe>'
+uid=1000(kitaru) gid=1000(kitaru) groups=1000(kitaru)
+drwxrwxrwt. 2 root root 40 Nov 28 14:33 /dev/mqueue
+drwxrwxrwt. 2 root root 40 Nov 28 14:33 /dev/shm
+shm /dev/shm tmpfs rw,nosuid,nodev,noexec,relatime,size=64000k,uid=1000,gid=1000,inode64 0 0
+mqueue /dev/mqueue mqueue rw,seclabel,nosuid,nodev,noexec,relatime 0 0
+/dev/shm/kcc-x ok
+/dev/mqueue/kcc-x [Errno 13] Permission denied: '/dev/mqueue/kcc-x'
+
+# The same image with SELinux labels off for the container
+$ podman run --rm --init --security-opt label=disable localhost/kcc-agent:0.27.6 python3 -c <probe>
+/dev/shm/kcc-x ok
+/dev/mqueue/kcc-x ok
+
+# The bare worker image (no block), as uid 1000
+$ podman run --rm --init --user 1000 docker.io/zenmldocker/kitaru-worker:0.27.6 python3 -c <probe>
+/dev/shm/kcc-x ok
+/dev/mqueue/kcc-x [Errno 13] Permission denied: '/dev/mqueue/kcc-x'
+
+# The AVC denials of the last 2 minutes (journal prefix removed)
+AVC avc:  denied  { write } for  pid=59688 comm="python3" name="/" dev="mqueue" ino=310760 scontext=system_u:system_r:container_t:s0:c12,c304 tcontext=unconfined_u:object_r:container_runtime_tmpfs_t:s0 tclass=dir permissive=0
+AVC avc:  denied  { write } for  pid=59812 comm="python3" name="/" dev="mqueue" ino=310133 scontext=system_u:system_r:container_t:s0:c727,c1010 tcontext=unconfined_u:object_r:container_runtime_tmpfs_t:s0 tclass=dir permissive=0
+
+# <probe>
+import os
+for p in ("/dev/shm/kcc-x", "/dev/mqueue/kcc-x"):
+    try:
+        os.close(os.open(p, os.O_WRONLY | os.O_CREAT, 0o644)); print(p, "ok")
+    except OSError as e:
+        print(p, e)
