@@ -666,6 +666,54 @@ class BuildTest(unittest.TestCase):
 
 
 class SettingsTest(unittest.TestCase):
+    def version_opener(self):
+        response = Mock()
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        response.read.return_value = b'{"version":"0.27.6"}'
+        opener = Mock()
+        opener.open.return_value = response
+        return opener
+
+    def test_remote_http_is_refused_before_any_request(self):
+        for url in (
+            "http://staging.example.com",
+            "http://8.8.8.8",
+            "http://10.0.0.1",
+            "http://0.0.0.0",
+            "http://localhost.example.com",
+            "http://localhost.",
+            "http://[2001:db8::1]",
+            "http://[::]",
+        ):
+            with self.subTest(url=url):
+                opener = self.version_opener()
+                with (
+                    patch.object(
+                        build, "build_opener", return_value=opener
+                    ) as create_opener,
+                    self.assertRaisesRegex(EvalveError, "HTTPS.*localhost.*loopback"),
+                ):
+                    build.server_version(url)
+                create_opener.assert_not_called()
+                opener.open.assert_not_called()
+
+    def test_https_and_literal_loopback_http_keep_the_public_version_probe(self):
+        for url in (
+            "https://staging.example.com",
+            "http://localhost:8080",
+            "http://127.0.0.1:8080/kitaru",
+            "http://127.0.0.2",
+            "http://[::1]:8080",
+        ):
+            with self.subTest(url=url):
+                opener = self.version_opener()
+                with patch.object(build, "build_opener", return_value=opener):
+                    self.assertEqual(build.server_version(url), VERSION)
+                request = opener.open.call_args.args[0]
+                self.assertEqual(request.full_url, url + "/api/v1/info")
+                self.assertNotIn("Authorization", request.headers)
+
     def test_env_file_only_reads_two_names_and_environment_wins(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "settings"

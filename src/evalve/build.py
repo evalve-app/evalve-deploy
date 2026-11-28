@@ -7,6 +7,7 @@ contract; they do not make arbitrary Dockerfiles reproducible or safe to run.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import posixpath
@@ -242,6 +243,15 @@ def server_version(url: str) -> str:
         raise EvalveError(
             "KITARU_API_URL must be an HTTP(S) URL without credentials, query or fragment."
         )
+    if parts.scheme == "http" and parts.hostname != "localhost":
+        try:
+            loopback = ipaddress.ip_address(parts.hostname).is_loopback
+        except ValueError:
+            loopback = False
+        if not loopback:
+            raise EvalveError(
+                "KITARU_API_URL must use HTTPS. HTTP is allowed only for localhost or a literal loopback IP."
+            )
     request = Request(
         f"{url.rstrip('/')}/api/v1/info", headers={"Accept": "application/json"}
     )

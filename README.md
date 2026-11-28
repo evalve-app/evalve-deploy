@@ -114,7 +114,10 @@ This version requires `--no-push`. It prints a local image name such as
 "Nothing was pushed and nothing was registered." Push and registration are
 the next part of the command. Even a local build needs the server's public
 `/api/v1/info` endpoint and pulls its matching worker base image. It sends no
-API credential. The version request times out after 15 seconds.
+API credential. The version request times out after 15 seconds and requires
+HTTPS. Plain HTTP is allowed only for exact `localhost` or a literal loopback
+IP, such as `127.0.0.1` or `::1`; other hosts, including private-network
+addresses, must use HTTPS.
 
 The context is `git archive` of the current commit, from the repository root.
 Commit or remove pending changes first; ignored, untracked files such as a
