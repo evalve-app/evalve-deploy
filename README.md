@@ -94,6 +94,8 @@ evalve up --no-loop-task-ports       # back to TCP 443 only
 
 The flags replace the saved list. A plain `up` keeps the list, and `down` and `up --restore` keep it too. Only the instance role can assume the push-only role, which can push an image and cannot delete one.
 
+Terraform also adds one policy to the instance role, for the work of the backend. With it the backend runs, stops and describes Loop tasks of the cluster `evalve`, registers task definitions of the families `evalve-loop-task-*`, passes the execution role to ECS tasks, assumes the push-only role, and checks that an image is in the repository. The policy refuses a task with ECS Exec on. The role cannot list tasks.
+
 ## Build an agent image locally
 
 Teammates and the Operator use `evalve build` from a clean clone of the agent

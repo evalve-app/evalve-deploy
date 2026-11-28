@@ -678,7 +678,7 @@ run "loop_task_cluster_execution_role_and_log_group" {
       aws_iam_role_policy_attachment.loop_task_execution[0].role == aws_iam_role.loop_task_execution[0].name &&
       aws_iam_role_policy_attachment.loop_task_execution[0].policy_arn == "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy" &&
       alltrue([
-        for role in concat([aws_iam_role_policy_attachment.ssm.role, aws_iam_role_policy.secrets.role], aws_iam_role_policy.agent_image_push[*].role) :
+        for role in concat([aws_iam_role_policy_attachment.ssm.role, aws_iam_role_policy.secrets.role], aws_iam_role_policy.agent_image_push[*].role, aws_iam_role_policy.loop_tasks[*].role) :
         role != aws_iam_role.loop_task_execution[0].name
       ])
     )
@@ -695,6 +695,7 @@ run "loop_task_cluster_execution_role_and_log_group" {
       "resource \"aws_iam_role_policy\" \"secrets\"",
       "resource \"aws_iam_role_policy\" \"agent_image_push\"",
       "resource \"aws_iam_role_policy_attachment\" \"loop_task_execution\"",
+      "resource \"aws_iam_role_policy\" \"loop_tasks\"",
     ]) && length(regexall("(?m)^\\s*(?:managed_policy_arns|inline_policy)\\s*[{=]", join("\n", [for name in fileset(path.module, "*.tf") : file("${path.module}/${name}")]))) == 0
     error_message = "An IAM policy resource was added or removed. Check it against the execution role assert in this run, then update this list."
   }
@@ -716,6 +717,94 @@ run "loop_task_cluster_execution_role_and_log_group" {
   }
 }
 
+run "instance_role_runs_loop_tasks_and_gives_push_credentials" {
+  command = apply
+
+  variables {
+    backend_image = "ghcr.io/evalve-app/evalve-backend@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+
+  assert {
+    condition = (
+      length(aws_iam_role_policy.loop_tasks) == 1 &&
+      aws_iam_role_policy.loop_tasks[0].role == aws_iam_role.server.name
+    )
+    error_message = "With a backend, the instance role must have the one policy for Loop tasks and agent images."
+  }
+
+  assert {
+    condition = [
+      for statement in jsondecode(aws_iam_role_policy.loop_tasks[0].policy).Statement : statement if statement.Effect == "Allow"
+      ] == [
+      {
+        Effect    = "Allow"
+        Action    = "ecs:RunTask"
+        Resource  = "arn:aws:ecs:us-east-1:123456789012:task-definition/evalve-loop-task-*:*"
+        Condition = { ArnEquals = { "ecs:cluster" = aws_ecs_cluster.evalve[0].arn } }
+      },
+      {
+        Effect    = "Allow"
+        Action    = ["ecs:StopTask", "ecs:DescribeTasks"]
+        Resource  = "arn:aws:ecs:us-east-1:123456789012:task/evalve/*"
+        Condition = { ArnEquals = { "ecs:cluster" = aws_ecs_cluster.evalve[0].arn } }
+      },
+      {
+        Effect    = "Allow"
+        Action    = "ecs:TagResource"
+        Resource  = "arn:aws:ecs:us-east-1:123456789012:task/evalve/*"
+        Condition = { StringEquals = { "ecs:CreateAction" = "RunTask" } }
+      },
+      {
+        Effect   = "Allow"
+        Action   = "ecs:RegisterTaskDefinition"
+        Resource = "arn:aws:ecs:us-east-1:123456789012:task-definition/evalve-loop-task-*:*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = "ecs:DescribeTaskDefinition"
+        Resource = "*"
+      },
+      {
+        Effect    = "Allow"
+        Action    = "iam:PassRole"
+        Resource  = aws_iam_role.loop_task_execution[0].arn
+        Condition = { StringEquals = { "iam:PassedToService" = "ecs-tasks.amazonaws.com" } }
+      },
+      {
+        Effect   = "Allow"
+        Action   = "sts:AssumeRole"
+        Resource = aws_iam_role.agent_image_push[0].arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = "ecr:DescribeImages"
+        Resource = "arn:aws:ecr:us-east-1:123456789012:repository/evalve-agent-images"
+      },
+    ]
+    error_message = "The instance role may run, stop, describe and tag Loop tasks of the Evalve cluster, register and describe task definitions, pass the execution role to ECS tasks, assume the push-only role, and describe images of evalve-agent-images. Nothing else."
+  }
+
+  assert {
+    condition = [
+      for statement in jsondecode(aws_iam_role_policy.loop_tasks[0].policy).Statement : statement if statement.Effect != "Allow"
+      ] == [{
+        Effect    = "Deny"
+        Action    = "ecs:RunTask"
+        Resource  = "*"
+        Condition = { StringEquals = { "ecs:enable-execute-command" = "true" } }
+    }]
+    error_message = "The instance role must not run a task with ECS Exec on."
+  }
+
+  assert {
+    condition = alltrue([
+      for word in ["ecs:ListTasks", "logs:", "s3:", "secretsmanager:"] :
+      !strcontains(aws_iam_role_policy.loop_tasks[0].policy, word)
+    ])
+    error_message = "The policy for Loop tasks must not list tasks, and must have no logs, S3 or secret action."
+  }
+}
+
 run "no_backend_has_no_loop_task_resources" {
   command = apply
 
@@ -728,6 +817,7 @@ run "no_backend_has_no_loop_task_resources" {
       length(aws_ecs_cluster.evalve) == 0 &&
       length(aws_iam_role.loop_task_execution) == 0 &&
       length(aws_iam_role_policy_attachment.loop_task_execution) == 0 &&
+      length(aws_iam_role_policy.loop_tasks) == 0 &&
       length(aws_cloudwatch_log_group.loop_task) == 0
     )
     error_message = "Without backend_image, none of the Loop task resources may exist."

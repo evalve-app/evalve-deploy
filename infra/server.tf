@@ -51,6 +51,81 @@ resource "aws_iam_role_policy" "secrets" {
   })
 }
 
+# What the backend does with the instance role: it starts and stops Loop tasks,
+# registers their task definitions and gives out push credentials (ADR 0006
+# point 13, ADR 0004 point 8). The role does not list tasks, and has no logs or
+# S3 action.
+locals {
+  loop_task_definitions = "arn:aws:ecs:${var.region}:${var.account_id}:task-definition/evalve-loop-task-*:*"
+  loop_tasks            = "arn:aws:ecs:${var.region}:${var.account_id}:task/${join("", aws_ecs_cluster.evalve[*].name)}/*"
+  in_evalve_cluster     = { ArnEquals = { "ecs:cluster" = one(aws_ecs_cluster.evalve[*].arn) } }
+}
+
+resource "aws_iam_role_policy" "loop_tasks" {
+  count = local.loop_task_enabled ? 1 : 0
+  role  = aws_iam_role.server.name
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect    = "Allow"
+        Action    = "ecs:RunTask"
+        Resource  = local.loop_task_definitions
+        Condition = local.in_evalve_cluster
+      },
+      {
+        Effect    = "Allow"
+        Action    = ["ecs:StopTask", "ecs:DescribeTasks"]
+        Resource  = local.loop_tasks
+        Condition = local.in_evalve_cluster
+      },
+      {
+        # RunTask with tags needs this. The backend sets evalve:loop and evalve:attempt.
+        Effect    = "Allow"
+        Action    = "ecs:TagResource"
+        Resource  = local.loop_tasks
+        Condition = { StringEquals = { "ecs:CreateAction" = "RunTask" } }
+      },
+      {
+        # The family prefix is a placeholder until a test on AWS confirms that
+        # AWS applies it (sc-254).
+        Effect   = "Allow"
+        Action   = "ecs:RegisterTaskDefinition"
+        Resource = local.loop_task_definitions
+      },
+      {
+        # AWS has no resource for this action.
+        Effect   = "Allow"
+        Action   = "ecs:DescribeTaskDefinition"
+        Resource = "*"
+      },
+      {
+        Effect    = "Allow"
+        Action    = "iam:PassRole"
+        Resource  = aws_iam_role.loop_task_execution[0].arn
+        Condition = { StringEquals = { "iam:PassedToService" = "ecs-tasks.amazonaws.com" } }
+      },
+      {
+        Effect   = "Allow"
+        Action   = "sts:AssumeRole"
+        Resource = aws_iam_role.agent_image_push[0].arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = "ecr:DescribeImages"
+        Resource = local.agent_image_repository_arn
+      },
+      {
+        # No ECS Exec: it opens a shell in a Loop task.
+        Effect    = "Deny"
+        Action    = "ecs:RunTask"
+        Resource  = "*"
+        Condition = { StringEquals = { "ecs:enable-execute-command" = "true" } }
+      },
+    ]
+  })
+}
+
 resource "aws_iam_instance_profile" "server" {
   name_prefix = "evalve-"
   role        = aws_iam_role.server.name
