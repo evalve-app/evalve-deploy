@@ -376,7 +376,20 @@ def up(args: argparse.Namespace) -> None:
         if backend:
             print("Deploying the Evalve backend…", flush=True)
             try:
-                power.deploy_backend(aws, outputs["instance_id"], backend)
+                settings = {
+                    "EVALVE_EXECUTOR": "fargate",
+                    "EVALVE_AWS_REGION": aws.region,
+                    "EVALVE_PUBLIC_URL": f"{url}/evalve",
+                    "EVALVE_KITARU_PUBLIC_URL": url,
+                    "EVALVE_ECS_CLUSTER": outputs["ecs_cluster_name"],
+                    "EVALVE_LOOP_TASK_SUBNET": outputs["loop_task_subnet_id"],
+                    "EVALVE_LOOP_TASK_SECURITY_GROUP": outputs["loop_task_security_group_id"],
+                    "EVALVE_LOOP_TASK_EXECUTION_ROLE_ARN": outputs["loop_task_execution_role_arn"],
+                    "EVALVE_LOOP_TASK_LOG_GROUP": outputs["loop_task_log_group"],
+                    "EVALVE_AGENT_IMAGE_REPOSITORY": outputs["agent_image_repository_url"],
+                    "EVALVE_AGENT_IMAGE_PUSH_ROLE_ARN": outputs["agent_image_push_role_arn"],
+                }
+                power.deploy_backend(aws, outputs["instance_id"], backend, settings)
             except EvalveError as exc:
                 backend_error = exc
         dashboard_url = outputs["dashboard_url"]

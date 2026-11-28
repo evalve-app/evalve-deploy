@@ -1,6 +1,7 @@
 """Graceful power changes for the EC2 instance already in Terraform state."""
 
 import json
+import shlex
 import subprocess
 import sys
 import time
@@ -26,34 +27,54 @@ DRAIN_KITARU = [
 ]
 DRAIN = DRAIN_BACKEND + DRAIN_KITARU
 BACKEND_IMAGE_FILE = "/etc/evalve/backend-image.env"
+BACKEND_SETTINGS_FILE = "/etc/evalve/backend-settings.env"
 
 
-def backend_deploy_commands(image: str) -> list[str]:
-    """Write the backend image on EC2 and restart only the backend when it changed.
-
-    The image is not in user_data, so a new image does not replace EC2. The CLI
-    has already checked that the image is a digest, so it is safe in the shell.
-
-    The image is pulled first: the unit's start step runs setup-database with
-    it, and systemd gives that step 90 seconds. A failed pull stops here and
-    leaves the running backend alone. The unit starts without waiting, so a
-    setup failure doesn't stop up before the dashboard (ADR 0005 point 6).
-    """
-    line = f"EVALVE_BACKEND_IMAGE={image}"
+def backend_deploy_commands(image: str, settings: dict[str, str]) -> list[str]:
+    """Install the settings and image on EC2, then start or restart the backend."""
+    lines = " ".join(shlex.quote(f"{key}={value}") for key, value in settings.items())
+    image_line = shlex.quote(f"EVALVE_BACKEND_IMAGE={image}")
+    # The lock covers both files and the restart. The marker survives an
+    # interrupted deploy so a retry applies changes already written to disk.
+    install = f"""umask 077
+exec 9>/etc/evalve/backend-deploy.lock
+flock 9
+restart_pending=/etc/evalve/backend-restart-pending
+temporary=
+trap 'if [ -n "$temporary" ]; then rm -f -- "$temporary"; fi' EXIT
+install_env_file() {{
+    destination=$1
+    shift
+    temporary=$(mktemp "$destination.XXXXXX")
+    printf '%s\\n' "$@" > "$temporary"
+    if ! cmp -s "$temporary" "$destination"; then
+        touch "$restart_pending"
+        mv -f -- "$temporary" "$destination"
+    else
+        rm -f -- "$temporary"
+    fi
+    temporary=
+}}
+install_env_file {BACKEND_SETTINGS_FILE} {lines}
+install_env_file {BACKEND_IMAGE_FILE} {image_line}
+if [ -f "$restart_pending" ]; then
+    systemctl restart --no-block {BACKEND_UNIT}
+    rm -f -- "$restart_pending"
+else
+    systemctl start --no-block {BACKEND_UNIT}
+fi"""
     return [
-        # On a new server, wait until the bootstrap has written the unit.
         "cloud-init status --wait",
-        f"docker pull {image}",
-        f"if [ \"$(cat {BACKEND_IMAGE_FILE} 2>/dev/null)\" != '{line}' ]; then"
-        f" printf '%s\\n' '{line}' > {BACKEND_IMAGE_FILE}.new"
-        f" && mv {BACKEND_IMAGE_FILE}.new {BACKEND_IMAGE_FILE}"
-        f" && systemctl restart --no-block {BACKEND_UNIT};"
-        f" else systemctl start --no-block {BACKEND_UNIT}; fi",
+        # A failed pull leaves the files and running backend alone.
+        f"docker pull {shlex.quote(image)}",
+        install,
     ]
 
 
-def deploy_backend(aws: Aws, instance_id: str, image: str) -> None:
-    run_server_command(aws, instance_id, backend_deploy_commands(image))
+def deploy_backend(
+    aws: Aws, instance_id: str, image: str, settings: dict[str, str]
+) -> None:
+    run_server_command(aws, instance_id, backend_deploy_commands(image, settings))
 
 
 # Caddy mounts this folder and serves its `current` link. Each release unpacks

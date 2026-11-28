@@ -173,6 +173,7 @@ StartLimitIntervalSec=0
 # evalve up writes the image to this file over Systems Manager, so a new
 # image restarts only this unit and does not replace EC2.
 ConditionPathExists=/etc/evalve/backend-image.env
+ConditionPathExists=/etc/evalve/backend-settings.env
 
 [Service]
 EnvironmentFile=/etc/evalve/backend-image.env
@@ -184,6 +185,7 @@ ExecStart=/usr/bin/docker run --name evalve-backend --network host \
   --env EVALVE_KITARU_URL=http://127.0.0.1:8000 \
   --env EVALVE_DB_SSL_CA=/run/rds-ca.pem \
   --env EVALVE_IMAGE=$${EVALVE_BACKEND_IMAGE} \
+  --env-file /etc/evalve/backend-settings.env \
   --env-file /run/evalve-backend/backend.env \
   --mount type=bind,src=/etc/evalve/rds-ca.pem,dst=/run/rds-ca.pem,readonly \
   --log-driver local --log-opt max-size=10m --log-opt max-file=3 \

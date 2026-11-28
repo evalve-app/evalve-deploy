@@ -29,6 +29,29 @@ CONFIG = {
     "domain": "example.com",
 }
 
+FARGATE_OUTPUTS = {
+    "ecs_cluster_name": "evalve",
+    "loop_task_subnet_id": "subnet-0123456789",
+    "loop_task_security_group_id": "sg-0123456789",
+    "loop_task_execution_role_arn": f"arn:aws:iam::{ACCOUNT}:role/loop-execution",
+    "loop_task_log_group": "/evalve/loop-tasks",
+    "agent_image_repository_url": f"{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com/evalve",
+    "agent_image_push_role_arn": f"arn:aws:iam::{ACCOUNT}:role/agent-push",
+}
+FARGATE_SETTINGS = {
+    "EVALVE_EXECUTOR": "fargate",
+    "EVALVE_AWS_REGION": REGION,
+    "EVALVE_PUBLIC_URL": "https://example.sslip.io/evalve",
+    "EVALVE_KITARU_PUBLIC_URL": "https://example.sslip.io",
+    "EVALVE_ECS_CLUSTER": "evalve",
+    "EVALVE_LOOP_TASK_SUBNET": "subnet-0123456789",
+    "EVALVE_LOOP_TASK_SECURITY_GROUP": "sg-0123456789",
+    "EVALVE_LOOP_TASK_EXECUTION_ROLE_ARN": f"arn:aws:iam::{ACCOUNT}:role/loop-execution",
+    "EVALVE_LOOP_TASK_LOG_GROUP": "/evalve/loop-tasks",
+    "EVALVE_AGENT_IMAGE_REPOSITORY": f"{ACCOUNT}.dkr.ecr.{REGION}.amazonaws.com/evalve",
+    "EVALVE_AGENT_IMAGE_PUSH_ROLE_ARN": f"arn:aws:iam::{ACCOUNT}:role/agent-push",
+}
+
 
 def resource(kind, name, attributes):
     return {
@@ -136,27 +159,61 @@ class PowerTest(unittest.TestCase):
         )
         self.assertIn("d='/etc/evalve/dashboard'", run.call_args.args[2][1])
 
-    def test_backend_deploy_writes_the_image_and_restarts_only_on_a_change(self):
+    def test_backend_deploy_installs_files_and_restarts_only_on_change(self):
         image = "ghcr.io/evalve-app/evalve-backend@sha256:" + "0" * 64
-        commands = power.backend_deploy_commands(image)
-        self.assertEqual(commands[0], "cloud-init status --wait")
-        # Pulled before the start step, which runs setup within systemd's 90 s.
-        self.assertEqual(commands[1], f"docker pull {image}")
-        # Started without waiting, so a setup failure doesn't stop up early.
-        self.assertEqual(
-            commands[2],
-            "if [ \"$(cat /etc/evalve/backend-image.env 2>/dev/null)\""
-            f" != 'EVALVE_BACKEND_IMAGE={image}' ]; then"
-            f" printf '%s\\n' 'EVALVE_BACKEND_IMAGE={image}'"
-            " > /etc/evalve/backend-image.env.new"
-            " && mv /etc/evalve/backend-image.env.new /etc/evalve/backend-image.env"
-            " && systemctl restart --no-block evalve-backend.service;"
-            " else systemctl start --no-block evalve-backend.service; fi",
-        )
+        settings = FARGATE_SETTINGS
+        commands = power.backend_deploy_commands(image, settings)
+        self.assertEqual(commands[:2], ["cloud-init status --wait", f"docker pull {image}"])
         aws = Mock()
         with patch.object(power, "run_server_command") as run:
-            power.deploy_backend(aws, INSTANCE, image)
+            power.deploy_backend(aws, INSTANCE, image, settings)
         run.assert_called_once_with(aws, INSTANCE, commands)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings_file = root / "backend-settings.env"
+            image_file = root / "backend-image.env"
+            restart_pending = root / "backend-restart-pending"
+
+            def deploy(settings, fail_restart=False):
+                script = power.backend_deploy_commands(image, settings)[2]
+                self.assertLess(
+                    script.index("install_env_file /etc/evalve/backend-settings.env"),
+                    script.index("install_env_file /etc/evalve/backend-image.env"),
+                )
+                # Exercise the actual shell commands without touching the host service.
+                systemctl = (
+                    'systemctl() { printf "%s\\n" "$*"; return '
+                    + ("1" if fail_restart else "0")
+                    + "; }\n"
+                )
+                return subprocess.run(
+                    ["sh", "-eu", "-c", systemctl + script.replace("/etc/evalve", directory)],
+                    capture_output=True,
+                    text=True,
+                )
+
+            restart = "restart --no-block evalve-backend.service\n"
+            start = "start --no-block evalve-backend.service\n"
+            self.assertEqual(deploy(settings).stdout, restart)
+            self.assertEqual(
+                settings_file.read_text().splitlines(),
+                [f"{name}={value}" for name, value in FARGATE_SETTINGS.items()],
+            )
+            self.assertEqual(settings_file.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(image_file.read_text(), f"EVALVE_BACKEND_IMAGE={image}\n")
+            self.assertEqual(deploy(settings).stdout, start)
+
+            changed = {**settings, "EVALVE_LOOP_TASK_SUBNET": "subnet-b"}
+            image_inode = image_file.stat().st_ino
+            failed = deploy(changed, fail_restart=True)
+            self.assertEqual(failed.returncode, 1)
+            self.assertTrue(restart_pending.exists())
+            self.assertIn("EVALVE_LOOP_TASK_SUBNET=subnet-b\n", settings_file.read_text())
+            self.assertEqual(image_file.stat().st_ino, image_inode)
+            self.assertEqual(deploy(changed).stdout, restart)
+            self.assertFalse(restart_pending.exists())
+            self.assertEqual(deploy(changed).stdout, start)
 
     def test_drain_stops_an_existing_backend_before_kitaru(self):
         backend = power.DRAIN.index(
@@ -699,6 +756,7 @@ class RestoreTest(unittest.TestCase):
                             "url": "https://example.sslip.io",
                             "dashboard_url": "https://dashboard.example.sslip.io",
                             "instance_id": INSTANCE,
+                            **FARGATE_OUTPUTS,
                         },
                         # A restore needs the repository of the agent images
                         # before Terraform runs.
@@ -741,7 +799,9 @@ class RestoreTest(unittest.TestCase):
                 self.assertEqual(variables["backend_secret_arn"], backend_secret)
                 if failing != "kitaru":
                     # The restored server gets the saved image from up.
-                    deploy.assert_called_once_with(aws, INSTANCE, result["backend_image"])
+                    deploy.assert_called_once_with(
+                        aws, INSTANCE, result["backend_image"], FARGATE_SETTINGS
+                    )
                 if failing != "kitaru":
                     # The restored server gets the dashboard from up as well,
                     # even when the backend fails (ADR 0005 point 6).
