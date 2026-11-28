@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "evalve"
 version = "0.1.0"
 description = "Deploy a shared Kitaru server in your AWS account"
-requires-python = ">=3.11"
+requires-python = ">=3.11.4"
 
 [project.scripts]
 evalve = "evalve.cli:main"
