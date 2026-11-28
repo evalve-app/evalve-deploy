@@ -99,29 +99,33 @@ RUN groupadd --gid 1000 kitaru && useradd --uid 1000 --gid 1000 kitaru \\
                         "locked-private-working-dir",
                         "RUN chmod 0755 /tmp && mkdir -p /tmp/evalve/src\n",
                         "/tmp/evalve/src",
+                        "/tmp/evalve",
                     ),
                     (
                         "owned-file",
                         "RUN touch /app/owned.py && chown 1000:1000 /app/owned.py && chmod 0444 /app/owned.py\n",
                         "/app",
+                        "root",
                     ),
                     (
                         "owned-directory",
                         "RUN mkdir /app/owned && chown 1000:1000 /app/owned && chmod 0555 /app/owned\n",
                         "/app",
+                        "root",
                     ),
                     (
                         "owned-parent",
                         "RUN mkdir -p /opt/source/agent && chown 1000:1000 /opt/source && chmod 0555 /opt/source\n",
                         "/opt/source/agent",
+                        "root",
                     ),
                 )
-                for name, instruction, working_dir in nonroot_source:
+                for name, instruction, working_dir, message in nonroot_source:
                     with self.subTest(nonroot_source=name):
                         path = f"Dockerfile.{name}"
                         (directory / path).write_text(f"FROM {team}\n{instruction}")
                         nonroot = engine.build_image(directory, path, name)
-                        with self.assertRaisesRegex(EvalveError, "root"):
+                        with self.assertRaisesRegex(EvalveError, message):
                             build.check_team_image(
                                 engine, nonroot, layers, "0.0.0", working_dir
                             )
