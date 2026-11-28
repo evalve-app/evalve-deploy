@@ -52,13 +52,14 @@ resource "aws_iam_role_policy" "secrets" {
 }
 
 # What the backend does with the instance role: it starts and stops Loop tasks,
-# registers their task definitions and gives out push credentials (ADR 0006
-# point 13, ADR 0004 point 8). The role does not list tasks, and has no logs or
-# S3 action.
+# registers their task definitions and gives a builder an ECR token (ADR 0006
+# point 13, ADR 0004 point 8). ADR 0005 point 8 sets the limits on iam:PassRole
+# and sts:AssumeRole. The role does not list tasks, and has no logs or S3 action.
 locals {
-  loop_task_definitions = "arn:aws:ecs:${var.region}:${var.account_id}:task-definition/evalve-loop-task-*:*"
-  loop_tasks            = "arn:aws:ecs:${var.region}:${var.account_id}:task/${join("", aws_ecs_cluster.evalve[*].name)}/*"
-  in_evalve_cluster     = { ArnEquals = { "ecs:cluster" = one(aws_ecs_cluster.evalve[*].arn) } }
+  # The last * also matches the revision.
+  loop_task_definition_arns = "arn:aws:ecs:${var.region}:${var.account_id}:task-definition/evalve-loop-task-*"
+  loop_task_arns            = "arn:aws:ecs:${var.region}:${var.account_id}:task/${join("", aws_ecs_cluster.evalve[*].name)}/*"
+  in_evalve_cluster         = { ArnEquals = { "ecs:cluster" = one(aws_ecs_cluster.evalve[*].arn) } }
 }
 
 resource "aws_iam_role_policy" "loop_tasks" {
@@ -70,20 +71,20 @@ resource "aws_iam_role_policy" "loop_tasks" {
       {
         Effect    = "Allow"
         Action    = "ecs:RunTask"
-        Resource  = local.loop_task_definitions
+        Resource  = local.loop_task_definition_arns
         Condition = local.in_evalve_cluster
       },
       {
         Effect    = "Allow"
         Action    = ["ecs:StopTask", "ecs:DescribeTasks"]
-        Resource  = local.loop_tasks
+        Resource  = local.loop_task_arns
         Condition = local.in_evalve_cluster
       },
       {
         # RunTask with tags needs this. The backend sets evalve:loop and evalve:attempt.
         Effect    = "Allow"
         Action    = "ecs:TagResource"
-        Resource  = local.loop_tasks
+        Resource  = local.loop_task_arns
         Condition = { StringEquals = { "ecs:CreateAction" = "RunTask" } }
       },
       {
@@ -91,7 +92,7 @@ resource "aws_iam_role_policy" "loop_tasks" {
         # AWS applies it (sc-254).
         Effect   = "Allow"
         Action   = "ecs:RegisterTaskDefinition"
-        Resource = local.loop_task_definitions
+        Resource = local.loop_task_definition_arns
       },
       {
         # AWS has no resource for this action.

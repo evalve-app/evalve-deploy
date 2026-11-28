@@ -717,7 +717,7 @@ run "loop_task_cluster_execution_role_and_log_group" {
   }
 }
 
-run "instance_role_runs_loop_tasks_and_gives_push_credentials" {
+run "instance_role_runs_loop_tasks_and_gives_ecr_tokens" {
   command = apply
 
   variables {
@@ -739,7 +739,7 @@ run "instance_role_runs_loop_tasks_and_gives_push_credentials" {
       {
         Effect    = "Allow"
         Action    = "ecs:RunTask"
-        Resource  = "arn:aws:ecs:us-east-1:123456789012:task-definition/evalve-loop-task-*:*"
+        Resource  = "arn:aws:ecs:us-east-1:123456789012:task-definition/evalve-loop-task-*"
         Condition = { ArnEquals = { "ecs:cluster" = aws_ecs_cluster.evalve[0].arn } }
       },
       {
@@ -757,7 +757,7 @@ run "instance_role_runs_loop_tasks_and_gives_push_credentials" {
       {
         Effect   = "Allow"
         Action   = "ecs:RegisterTaskDefinition"
-        Resource = "arn:aws:ecs:us-east-1:123456789012:task-definition/evalve-loop-task-*:*"
+        Resource = "arn:aws:ecs:us-east-1:123456789012:task-definition/evalve-loop-task-*"
       },
       {
         Effect   = "Allow"
@@ -801,7 +801,7 @@ run "instance_role_runs_loop_tasks_and_gives_push_credentials" {
       for word in ["ecs:ListTasks", "logs:", "s3:", "secretsmanager:"] :
       !strcontains(aws_iam_role_policy.loop_tasks[0].policy, word)
     ])
-    error_message = "The policy for Loop tasks must not list tasks, and must have no logs, S3 or secret action."
+    error_message = "The policy for Loop tasks and agent images must not list tasks, and must have no logs, S3 or secret action."
   }
 }
 
