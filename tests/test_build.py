@@ -9,6 +9,7 @@ import tarfile
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import datetime, timezone
 from http.client import IncompleteRead
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -139,6 +140,19 @@ class BuildTest(unittest.TestCase):
     def assert_no_build(self):
         self.assertFalse(any(argv[1:2] == ["build"] for argv, _ in self.programs.calls))
 
+    def test_two_builds_of_the_same_commit_in_one_second_have_distinct_names(self):
+        with patch.object(build, "datetime") as clock:
+            clock.now.return_value = datetime(
+                2026, 11, 27, 12, 0, 0, tzinfo=timezone.utc
+            )
+            first = self.execute()
+            second = self.execute()
+        self.assertNotEqual(first, second)
+        for name in (first, second):
+            self.assertRegex(
+                name, r"^evalve-agent-image:[a-f0-9]{12}-[0-9]{14}-[a-f0-9]{32}$"
+            )
+
     def test_builds_the_snapshot_checks_then_publishes_only_a_local_tag(self):
         self.programs.files["app.py"] = b"print('agent')\n"
         image = self.execute(
@@ -149,7 +163,9 @@ class BuildTest(unittest.TestCase):
             "--timeout-seconds",
             "200",
         )
-        self.assertRegex(image, r"^evalve-agent-image:abcdef012345-[0-9]{14}$")
+        self.assertRegex(
+            image, r"^evalve-agent-image:abcdef012345-[0-9]{14}-[a-f0-9]{32}$"
+        )
         self.assertIn(image, self.output)
         self.assertIn("Nothing was pushed and nothing was registered.", self.output)
         self.version.assert_called_once_with("https://kitaru.example")

@@ -42,6 +42,32 @@ RUN groupadd --gid 1000 kitaru && useradd --uid 1000 --gid 1000 kitaru \\
 """)
                 team = engine.build_image(directory, "Dockerfile", "team")
                 build.check_team_image(engine, team, layers, "0.0.0", "/app")
+                nonroot_source = (
+                    (
+                        "owned-file",
+                        "RUN touch /app/owned.py && chown 1000:1000 /app/owned.py && chmod 0444 /app/owned.py\n",
+                        "/app",
+                    ),
+                    (
+                        "owned-directory",
+                        "RUN mkdir /app/owned && chown 1000:1000 /app/owned && chmod 0555 /app/owned\n",
+                        "/app",
+                    ),
+                    (
+                        "owned-parent",
+                        "RUN mkdir -p /opt/source/agent && chown 1000:1000 /opt/source && chmod 0555 /opt/source\n",
+                        "/opt/source/agent",
+                    ),
+                )
+                for name, instruction, working_dir in nonroot_source:
+                    with self.subTest(nonroot_source=name):
+                        path = f"Dockerfile.{name}"
+                        (directory / path).write_text(f"FROM {team}\n{instruction}")
+                        nonroot = engine.build_image(directory, path, name)
+                        with self.assertRaisesRegex(EvalveError, "root"):
+                            build.check_team_image(
+                                engine, nonroot, layers, "0.0.0", working_dir
+                            )
                 # Exercise actual engine exit 126/127 with daemon-prefixed
                 # stderr. These must reach the check's Dockerfile guidance.
                 missing_programs = (

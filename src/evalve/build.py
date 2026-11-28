@@ -13,12 +13,15 @@ import posixpath
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import tarfile
 import tempfile
+import threading
 import tomllib
 import uuid
 from datetime import datetime, timezone
+from contextlib import contextmanager
 from http.client import HTTPException
 from importlib import resources
 from pathlib import Path, PurePosixPath
@@ -55,6 +58,42 @@ FIND_WRITABLE = [
     "-writable",
     "-print",
 ]
+
+
+class BuildInterrupted(KeyboardInterrupt):
+    """A normal termination signal that must unwind through build cleanup."""
+
+    def __init__(self, signum: int):
+        self.signum = signum
+        super().__init__(f"Build interrupted by {signal.Signals(signum).name}.")
+
+
+@contextmanager
+def termination_signals():
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = {}
+
+    def interrupt(signum, frame):
+        # Let the first normal termination finish cleanup. SIGKILL can still
+        # force termination, and inherited ignored signals stay ignored.
+        for caught in previous:
+            signal.signal(caught, signal.SIG_IGN)
+        raise BuildInterrupted(signum)
+
+    try:
+        for name in ("SIGTERM", "SIGHUP"):
+            signum = getattr(signal, name, None)
+            if signum is not None:
+                handler = signal.getsignal(signum)
+                if handler != signal.SIG_IGN:
+                    previous[signum] = handler
+                    signal.signal(signum, interrupt)
+        yield
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
 
 
 def positive_integer(value: str) -> int:
@@ -229,14 +268,56 @@ def run_program(
 ) -> subprocess.CompletedProcess:
     # Git's NUL-delimited filenames are arbitrary bytes. Preserve them through
     # text stdout and stdin so check-attr and archive see the same filenames.
-    return subprocess.run(
+    input_ = kwargs.pop("input", None)
+    timeout = kwargs.pop("timeout", None)
+    check = kwargs.pop("check", False)
+    if capture_output:
+        if kwargs.get("stdout") is not None or kwargs.get("stderr") is not None:
+            raise ValueError("stdout/stderr cannot be combined with capture_output.")
+        kwargs.update(stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if input_ is not None:
+        if kwargs.get("stdin") is not None:
+            raise ValueError("stdin cannot be combined with input.")
+        kwargs["stdin"] = subprocess.PIPE
+    with subprocess.Popen(
         argv,
-        capture_output=capture_output,
         text=True,
         encoding="utf-8",
         errors="surrogateescape",
+        start_new_session=os.name == "posix",
         **kwargs,
-    )
+    ) as process:
+        try:
+            stdout, stderr = process.communicate(input_, timeout=timeout)
+        except BaseException:
+            stop_program(process)
+            raise
+        result = subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+        if check:
+            result.check_returncode()
+        return result
+
+
+def stop_program(process: subprocess.Popen) -> None:
+    """Stop the program and its ordinary descendants before engine cleanup."""
+
+    def send(signum):
+        try:
+            if os.name == "posix":
+                os.killpg(process.pid, signum)
+            elif signum == signal.SIGTERM:
+                process.terminate()
+            else:
+                process.kill()
+        except ProcessLookupError:
+            pass
+
+    send(signal.SIGTERM)
+    try:
+        process.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        send(getattr(signal, "SIGKILL", signal.SIGTERM))
+        process.communicate(timeout=5)
 
 
 def require_success(result, action: str) -> str:
@@ -561,7 +642,7 @@ for value in sys.argv[1:]:
     if not path.is_dir():
         raise SystemExit(1)
     for parent in (path, *path.parents, *path.resolve().parents):
-        if os.access(parent, os.W_OK):
+        if parent.lstat().st_uid != 0 or parent.stat().st_uid != 0 or os.access(parent, os.W_OK):
             raise SystemExit(1)
 """
     parents = engine.check(
@@ -576,6 +657,13 @@ for value in sys.argv[1:]:
     if parents.returncode:
         raise EvalveError(source_message)
     for path in paths:
+        owners = engine.check(image, "find", path, "!", "-uid", "0", "-print")
+        if owners.returncode in (126, 127):
+            raise EvalveError(
+                "The Dockerfile must keep executable find for the image checks."
+            )
+        if owners.returncode or owners.stdout:
+            raise EvalveError(source_message)
         result = engine.check(image, "find", path, "-writable", "-print")
         if result.returncode in (126, 127):
             raise EvalveError(
@@ -652,6 +740,11 @@ def copy_supervisor(target: Path) -> None:
 
 
 def build(args, *, run=None, get_version=None) -> str:
+    with termination_signals():
+        return _build(args, run=run, get_version=get_version)
+
+
+def _build(args, *, run=None, get_version=None) -> str:
     validate_inputs(args)
     run = run or run_program
     get_version = get_version or server_version
@@ -697,7 +790,8 @@ def build(args, *, run=None, get_version=None) -> str:
         (final_context / "Dockerfile").write_text(final_dockerfile(image, commit))
         image = engine.build_image(final_context, "Dockerfile", "final")
         check_final_image(engine, image)
-        tag = f"{commit[:12]}-{datetime.now(timezone.utc):%Y%m%d%H%M%S}"
+        invocation_id = engine.prefix.removeprefix("evalve-build-")
+        tag = f"{commit[:12]}-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{invocation_id}"
         candidate = f"evalve-agent-image:{tag}"
         existing = engine.call(
             "image",

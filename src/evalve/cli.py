@@ -441,6 +441,9 @@ def main(argv: list[str] | None = None) -> int:
                         lifecycle.down(aws, directory)
                     else:
                         lifecycle.power_change(aws, args.command)
+    except build.BuildInterrupted as exc:
+        print(f"Evalve: {exc}", file=sys.stderr)
+        return 128 + exc.signum
     except (
         EvalveError,
         argparse.ArgumentTypeError,

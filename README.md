@@ -110,7 +110,7 @@ evalve build --agent my-agent \
 ```
 
 This version requires `--no-push`. It prints a local image name such as
-`evalve-agent-image:abc123def456-20261127153000` and
+`evalve-agent-image:abc123def456-20261127153000-<32 hex UUID>` and
 "Nothing was pushed and nothing was registered." Push and registration are
 the next part of the command. Even a local build needs the server's public
 `/api/v1/info` endpoint and pulls its matching worker base image. It sends no
@@ -149,11 +149,19 @@ Unexpected failures refuse the image. The image build itself remains
 cancellable and has no fixed timeout. The base-image pull and both image builds
 stream engine output live, including anything the Dockerfile prints. Check-container output stays
 captured. Source-tree checks use `find` without following symlinks.
+They require root ownership of the source files, directories and parents,
+including files whose current mode is read-only: a file owner can restore
+write access with `chmod`.
 Evalve removes its temporary files,
 check containers and intermediate image references on success, failure or
 interruption, while retaining the successful named image, pulled base and
 normal engine cache. Cleanup failures produce a nonzero exit and identify
 resources needing removal, including the final image name if one was kept.
+On SIGTERM or SIGHUP, the CLI stops its active child process group and runs
+the same cleanup, then exits with `128 + signal number`. Inherited ignored
+signals stay ignored. SIGKILL and machine failure cannot run cleanup.
+The full invocation UUID in each final tag keeps concurrent builds of the
+same commit in the same second from replacing each other's names.
 
 Options:
 
